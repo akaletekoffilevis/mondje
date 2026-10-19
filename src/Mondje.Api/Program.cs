@@ -1,5 +1,6 @@
 using Mondje.Api.Infrastructure;
 using Mondje.Infrastructure.Data;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +14,9 @@ if (app.Environment.IsDevelopment())
 {
     await app.InitialiseDatabaseAsync();
     app.MapOpenApi();
+
+    // Browser API reference (Swagger-like): browse and try endpoints at http://localhost:5002/scalar
+    app.MapScalarApiReference();
 }
 else
 {

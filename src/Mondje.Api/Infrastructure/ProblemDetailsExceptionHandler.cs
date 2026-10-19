@@ -1,6 +1,7 @@
 using Mondje.Application.Common.Exceptions;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using NotFoundException = Mondje.Application.Common.Exceptions.NotFoundException;
 
 namespace Mondje.Api.Infrastructure;
 
@@ -20,7 +21,32 @@ public class ProblemDetailsExceptionHandler : IExceptionHandler
 
     public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
-        if (exception is not ValidationException ve)
+        var (statusCode, problem) = exception switch
+        {
+            ValidationException ve => (StatusCodes.Status422UnprocessableEntity, (object)new ValidationProblemDetails(ve.Errors)
+            {
+                Status = StatusCodes.Status422UnprocessableEntity,
+                Title = "One or more validation failures have occurred.",
+                Type = "https://tools.ietf.org/html/rfc9110#section-15.5.13"
+            }),
+            NotFoundException ne => (StatusCodes.Status404NotFound, new ProblemDetails
+            {
+                Status = StatusCodes.Status404NotFound,
+                Title = "Resource not found.",
+                Detail = ne.Message,
+                Type = "https://tools.ietf.org/html/rfc9110#section-15.5.5"
+            }),
+            ConflictException ce => (StatusCodes.Status409Conflict, new ProblemDetails
+            {
+                Status = StatusCodes.Status409Conflict,
+                Title = "Conflict.",
+                Detail = ce.Message,
+                Type = "https://tools.ietf.org/html/rfc9110#section-15.5.10"
+            }),
+            _ => (0, null)
+        };
+
+        if (statusCode == 0)
         {
             // Never expose technical details to the client. The full exception is logged server-side.
             _logger.LogError(exception, "Unhandled exception for {Method} {Path}", httpContext.Request.Method, httpContext.Request.Path);
@@ -36,14 +62,8 @@ public class ProblemDetailsExceptionHandler : IExceptionHandler
             return true;
         }
 
-        httpContext.Response.StatusCode = StatusCodes.Status422UnprocessableEntity;
-        await httpContext.Response.WriteAsJsonAsync(new ValidationProblemDetails(ve.Errors)
-        {
-            Status = StatusCodes.Status422UnprocessableEntity,
-            Title = "One or more validation failures have occurred.",
-            Type = "https://tools.ietf.org/html/rfc9110#section-15.5.13"
-        }, cancellationToken);
-
+        httpContext.Response.StatusCode = statusCode;
+        await httpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
         return true;
     }
 }
