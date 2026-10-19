@@ -2,48 +2,75 @@
 @{
     ViewData["Title"] = "Import " + Model.fileName;
 }
-<h1>Import @Model.fileName</h1>
-<div id="import-card">
-    <p><strong>Statut :</strong> <span id="status">@Model.status</span></p>
-    <p><strong>Progression :</strong> <span id="progress">@Model.progressPercent</span> % — <span id="processed">@Model.processedLines</span>/@Model.totalLines lignes</p>
-    <div class="progress mb-2"><div id="bar" class="progress-bar" style="width:@(Model.progressPercent)%">@Model.progressPercent%</div></div>
-    <p>Insérées : <span id="inserted">@Model.insertedCount</span> — Doublons : <span id="dup">@Model.duplicateCount</span> — Erreurs : <span id="errs">@Model.errorCount</span></p>
-    <p>Octets : <span id="bytes">@Model.bytesProcessed</span>/@Model.fileSizeBytes</p>
-    <p>Durée serveur : <span id="dur">@(Model.durationMs is null ? "—" : (Model.durationMs.Value / 1000.0).ToString("F1") + " s")</span></p>
-    @if (Model.errorCount > 0)
-    {
-        <a asp-action="Errors" asp-route-id="@Model.id" class="btn btn-warning">Voir les @Model.errorCount erreurs</a>
-    }
-    @if (Model.status is "RUNNING" or "PENDING")
-    {
-        <form asp-action="Cancel" asp-route-id="@Model.id" method="post" style="display:inline">@Html.AntiForgeryToken()<button class="btn btn-danger" onclick="return confirm('Annuler cet import ?')">Annuler</button></form>
-    }
-    <a asp-action="Index" class="btn btn-secondary">Retour</a>
+<h1>Import : @Model.fileName</h1>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Statut :</strong> <span id="status" class="badge bg-secondary">@Model.status</span></p>
+                <p><strong>Progression :</strong> <span id="progress">@Model.progressPercent</span> %</p>
+                <div class="progress mb-2" style="height:24px;">
+                    <div id="bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:@(Model.progressPercent)%" aria-valuenow="@Model.progressPercent" aria-valuemin="0" aria-valuemax="100">
+                        <span id="barText">@Model.progressPercent%</span>
+                    </div>
+                </div>
+                <p class="text-muted small">Lignes traitées : <span id="processed">@Model.processedLines</span> / @Model.totalLines</p>
+            </div>
+            <div class="col-md-6">
+                <ul class="list-group">
+                    <li class="list-group-item d-flex justify-content-between"><span>Insérées</span><strong id="inserted" class="text-success">@Model.insertedCount</strong></li>
+                    <li class="list-group-item d-flex justify-content-between"><span>Doublons (ignorés)</span><strong id="dup" class="text-warning">@Model.duplicateCount</strong></li>
+                    <li class="list-group-item d-flex justify-content-between"><span>Erreurs</span><strong id="errs" class="text-danger">@Model.errorCount</strong></li>
+                    <li class="list-group-item d-flex justify-content-between"><span>Octets</span><span id="bytes">@Model.bytesProcessed</span> / @Model.fileSizeBytes</li>
+                    <li class="list-group-item d-flex justify-content-between"><span>Durée serveur</span><span id="dur">@(Model.durationMs is null ? "—" : (Model.durationMs.Value / 1000.0).ToString("F1") + " s")</span></li>
+                </ul>
+            </div>
+        </div>
+    </div>
 </div>
+
+@if (Model.errorCount > 0)
+{
+    <a asp-action="Errors" asp-route-id="@Model.id" class="btn btn-warning mb-2">Voir les @Model.errorCount erreurs</a>
+}
+@if (Model.status is "RUNNING" or "PENDING")
+{
+    <form asp-action="Cancel" asp-route-id="@Model.id" method="post" style="display:inline">
+        @Html.AntiForgeryToken()
+        <button class="btn btn-danger mb-2" onclick="return confirm('Annuler cet import ? Seules les lignes non modifiées disparaîtront.')">Annuler l'import</button>
+    </form>
+}
+<a asp-action="Index" class="btn btn-secondary mb-2">Retour à la liste</a>
 
 @section Scripts {
 <script>
 (function(){
     var id = "@Model.id";
     var terminal = ["COMPLETED","FAILED","CANCELLED"];
+    var apiUrl = "http://localhost:5002/api/Imports/" + id;
+    function fmt(n){ return n.toLocaleString("fr-FR"); }
     function poll(){
-        fetch("http://localhost:5002/api/Imports/" + id).then(r=>r.json()).then(d=>{
-            document.getElementById("status").textContent = d.status;
+        fetch(apiUrl).then(function(r){ return r.json(); }).then(function(d){
+            var st = document.getElementById("status");
+            st.textContent = d.status;
+            st.className = "badge " + (d.status==="COMPLETED"?"bg-success":d.status==="FAILED"?"bg-danger":d.status==="CANCELLED"?"bg-warning":"bg-secondary");
             document.getElementById("progress").textContent = d.progressPercent;
-            document.getElementById("processed").textContent = d.processedLines;
-            document.getElementById("inserted").textContent = d.insertedCount;
-            document.getElementById("dup").textContent = d.duplicateCount;
-            document.getElementById("errs").textContent = d.errorCount;
-            document.getElementById("bytes").textContent = d.bytesProcessed;
+            document.getElementById("processed").textContent = fmt(d.processedLines);
+            document.getElementById("inserted").textContent = fmt(d.insertedCount);
+            document.getElementById("dup").textContent = fmt(d.duplicateCount);
+            document.getElementById("errs").textContent = fmt(d.errorCount);
+            document.getElementById("bytes").textContent = fmt(d.bytesProcessed);
             var bar = document.getElementById("bar");
             bar.style.width = d.progressPercent + "%";
-            bar.textContent = d.progressPercent + "%";
+            bar.setAttribute("aria-valuenow", d.progressPercent);
+            document.getElementById("barText").textContent = d.progressPercent + "%";
             if (d.durationMs) document.getElementById("dur").textContent = (d.durationMs/1000).toFixed(1) + " s";
-            if (terminal.indexOf(d.status) < 0) setTimeout(poll, 2000);
-            else location.reload();
-        }).catch(()=>setTimeout(poll, 3000));
+            if (terminal.indexOf(d.status) < 0) setTimeout(poll, 1000);
+            else { setTimeout(function(){ location.reload(); }, 500); }
+        }).catch(function(){ setTimeout(poll, 2000); });
     }
-    if (terminal.indexOf("@Model.status") < 0) setTimeout(poll, 2000);
+    if (terminal.indexOf("@Model.status") < 0) setTimeout(poll, 1000);
 })();
 </script>
 }

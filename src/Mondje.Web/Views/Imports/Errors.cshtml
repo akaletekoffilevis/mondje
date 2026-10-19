@@ -3,27 +3,64 @@
     ViewData["Title"] = "Erreurs d'import";
     var imp = ViewBag.Import as Mondje.Web.Models.ImportDto;
 }
-<h1>Erreurs — @imp?.fileName</h1>
-<p class="text-muted">@Model?.items.Count erreurs affichées (sur @imp?.errorCount au total).</p>
-<table class="table table-sm table-striped">
-    <thead><tr><th>Ligne</th><th>Kind</th><th>Raison</th><th></th></tr></thead>
-    <tbody>
-    @foreach (var e in (Model?.items ?? new()))
+<h1>Erreurs de l'import « @imp?.fileName »</h1>
+<p class="text-muted">
+    @imp?.errorCount erreur(s) au total sur @imp?.totalLines lignes.
+    Les lignes valides ont bien été importées — seules les lignes ci-dessous ont été rejetées.
+</p>
+
+@if (Model is null || Model.items.Count == 0)
+{
+    <div class="alert alert-success">Aucune erreur à afficher.</div>
+}
+else
+{
+    <div class="alert alert-info">
+        <strong>Comment lire ce tableau :</strong>
+        <ul class="mb-0">
+            <li><strong>Ligne</strong> : numéro de la ligne dans votre fichier (la 1ʳᵉ ligne = ligne 1).</li>
+            <li><strong>Type</strong> : FORMAT = la ligne n'a pas pu être lue ; VALIDATION = la ligne est lisible mais une valeur est invalide.</li>
+            <li><strong>Raison</strong> : explication en français de ce qui ne va pas.</li>
+            <li>Cliquez sur <em>Voir la ligne</em> pour afficher le contenu exact de la ligne telle qu'elle apparaît dans votre fichier.</li>
+        </ul>
+    </div>
+
+    <table class="table table-sm table-striped">
+        <thead class="table-dark">
+            <tr><th style="width:80px">Ligne</th><th style="width:110px">Type</th><th>Raison</th><th style="width:140px">Action</th></tr>
+        </thead>
+        <tbody>
+        @foreach (var e in Model.items)
+        {
+            var badge = e.kind == "FORMAT" ? "bg-danger" : "bg-warning text-dark";
+            <tr>
+                <td><strong>@e.lineNumber</strong></td>
+                <td><span class="badge @badge">@e.kind</span></td>
+                <td>@e.reason</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="showLine(@e.lineNumber, @Json.Serialize(e.rawLine))">
+                        Voir la ligne
+                    </button>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+
+    <div id="rawline-box" class="card mb-3 d-none">
+        <div class="card-header">Contenu de la ligne <span id="rl-line"></span></div>
+        <div class="card-body">
+            <pre id="rl-content" class="mb-0 bg-light p-2 rounded" style="white-space:pre-wrap;word-break:break-all;"></pre>
+        </div>
+    </div>
+
+    @if (Model.hasMore && Model.nextCursor is not null)
     {
-        <tr>
-            <td>@e.lineNumber</td>
-            <td>@e.kind</td>
-            <td>@e.reason</td>
-            <td><button class="btn btn-sm btn-outline-secondary" onclick="showLine(@e.lineNumber, @Json.Serialize(e.rawLine))">Voir la ligne brute</button></td>
-        </tr>
+        <a class="btn btn-outline-primary" asp-action="Errors" asp-route-id="@imp?.id" asp-route-cursor="@Model.nextCursor">Page suivante →</a>
     }
-    </tbody>
-</table>
-<div id="rawline-box" class="alert alert-secondary d-none">
-    <strong>Ligne <span id="rl-line"></span> :</strong>
-    <pre id="rl-content" class="mb-0"></pre>
-</div>
-<a asp-action="Details" asp-route-id="@imp?.id" class="btn btn-secondary">Retour</a>
+}
+
+<a asp-action="Details" asp-route-id="@imp?.id" class="btn btn-secondary mt-2">Retour au détail de l'import</a>
 
 @section Scripts {
 <script>
@@ -31,6 +68,7 @@ function showLine(line, content){
     document.getElementById("rl-line").textContent = line;
     document.getElementById("rl-content").textContent = content;
     document.getElementById("rawline-box").classList.remove("d-none");
+    document.getElementById("rawline-box").scrollIntoView({behavior:"smooth"});
 }
 </script>
 }

@@ -5,9 +5,10 @@
     var minAmount = ViewBag.MinAmount as long?;
     var maxAmount = ViewBag.MaxAmount as long?;
     var q = ViewBag.Q as string;
+    var cursor = Context.Request.Query["cursor"].ToString();
 }
 <h1>Transactions</h1>
-<form method="get" class="row g-2 mb-3">
+<form method="get" class="row g-2 mb-3" id="filterForm">
     <div class="col-md-2">
         <select name="type" class="form-select">
             <option value="">Tous types</option>
@@ -56,11 +57,67 @@ else
         }
         </tbody>
     </table>
-    <div class="d-flex justify-content-between">
+    <div class="d-flex justify-content-between align-items-center">
+        <button id="prevBtn" class="btn btn-outline-secondary" onclick="goBack()" disabled>← Précédent</button>
         @if (Model.hasMore && Model.nextCursor is not null)
         {
-            <a class="btn btn-outline-primary" asp-action="Index" asp-route-type="@type" asp-route-minAmount="@minAmount" asp-route-maxAmount="@maxAmount" asp-route-q="@q" asp-route-cursor="@Model.nextCursor">Page suivante →</a>
+            <a id="nextBtn" class="btn btn-outline-primary" href="@Url.Action("Index", new { type, minAmount, maxAmount, q, cursor = Model.nextCursor })">Suivant →</a>
         }
-        else { <span class="text-muted">Fin de la liste.</span> }
+        else
+        {
+            <span class="text-muted">Fin de la liste.</span>
+        }
     </div>
+}
+
+@section Scripts {
+<script>
+(function(){
+    // Cursor stack for back navigation
+    var stackKey = "txCursorStack";
+    var currentCursor = "@(cursor ?? "")";
+    
+    // On page load, check if we have a previous cursor in the stack
+    var stack = JSON.parse(sessionStorage.getItem(stackKey) || "[]");
+    
+    // If current cursor is in stack, pop it (we're going back)
+    if (currentCursor && stack.length > 0 && stack[stack.length-1] === currentCursor) {
+        stack.pop();
+        sessionStorage.setItem(stackKey, JSON.stringify(stack));
+    }
+    
+    // Show/hide previous button
+    var prevBtn = document.getElementById("prevBtn");
+    if (prevBtn && stack.length > 0) {
+        prevBtn.disabled = false;
+        prevBtn.onclick = function() {
+            var prev = stack.pop();
+            sessionStorage.setItem(stackKey, JSON.stringify(stack));
+            var url = new URL(window.location.href);
+            if (prev) url.searchParams.set("cursor", prev);
+            else url.searchParams.delete("cursor");
+            window.location.href = url.toString();
+        };
+    }
+    
+    // When clicking next, push current cursor to stack
+    var nextBtn = document.getElementById("nextBtn");
+    if (nextBtn) {
+        nextBtn.addEventListener("click", function(e) {
+            e.preventDefault();
+            if (currentCursor) stack.push(currentCursor);
+            sessionStorage.setItem(stackKey, JSON.stringify(stack));
+            window.location.href = nextBtn.href;
+        });
+    }
+    
+    // Reset stack when filters change
+    var form = document.getElementById("filterForm");
+    if (form) {
+        form.addEventListener("submit", function() {
+            sessionStorage.removeItem(stackKey);
+        });
+    }
+})();
+</script>
 }

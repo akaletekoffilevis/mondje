@@ -1,6 +1,7 @@
 @model Mondje.Web.Models.ImportListResponse
 @{
     ViewData["Title"] = "Imports";
+    var cursor = Context.Request.Query["cursor"].ToString();
 }
 <h1>Imports</h1>
 <form asp-action="Upload" method="post" enctype="multipart/form-data" class="row g-2 mb-3">
@@ -41,8 +42,50 @@ else
         }
         </tbody>
     </table>
-    @if (Model.hasMore && Model.nextCursor is not null)
-    {
-        <a class="btn btn-outline-primary" asp-action="Index" asp-route-cursor="@Model.nextCursor">Page suivante →</a>
+    <div class="d-flex justify-content-between align-items-center">
+        <button id="prevBtn" class="btn btn-outline-secondary" disabled>← Précédent</button>
+        @if (Model.hasMore && Model.nextCursor is not null)
+        {
+            <a id="nextBtn" class="btn btn-outline-primary" href="@Url.Action("Index", new { cursor = Model.nextCursor })">Suivant →</a>
+        }
+        else
+        {
+            <span class="text-muted">Fin de la liste.</span>
+        }
+    </div>
+}
+
+@section Scripts {
+<script>
+(function(){
+    var stackKey = "importCursorStack";
+    var currentCursor = "@(cursor ?? "")";
+    var stack = JSON.parse(sessionStorage.getItem(stackKey) || "[]");
+    if (currentCursor && stack.length > 0 && stack[stack.length-1] === currentCursor) {
+        stack.pop();
+        sessionStorage.setItem(stackKey, JSON.stringify(stack));
     }
+    var prevBtn = document.getElementById("prevBtn");
+    if (prevBtn && stack.length > 0) {
+        prevBtn.disabled = false;
+        prevBtn.onclick = function() {
+            var prev = stack.pop();
+            sessionStorage.setItem(stackKey, JSON.stringify(stack));
+            var url = new URL(window.location.href);
+            if (prev) url.searchParams.set("cursor", prev);
+            else url.searchParams.delete("cursor");
+            window.location.href = url.toString();
+        };
+    }
+    var nextBtn = document.getElementById("nextBtn");
+    if (nextBtn) {
+        nextBtn.addEventListener("click", function(e) {
+            e.preventDefault();
+            if (currentCursor) stack.push(currentCursor);
+            sessionStorage.setItem(stackKey, JSON.stringify(stack));
+            window.location.href = nextBtn.href;
+        });
+    }
+})();
+</script>
 }
