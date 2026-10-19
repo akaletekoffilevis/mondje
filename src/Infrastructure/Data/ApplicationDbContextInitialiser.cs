@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -21,14 +22,14 @@ public class ApplicationDbContextInitialiser(
     ApplicationDbContext context)
 {
     /// <summary>
-    /// Creates the database and schema if they do not exist. Data is never dropped automatically:
-    /// imports must survive server restarts (challenge 12 - resume after crash).
+    /// Applies pending migrations, creating the database if needed. Data is never dropped
+    /// automatically: imports must survive server restarts (challenge 12 - resume after crash).
     /// </summary>
     public async Task InitialiseAsync()
     {
         try
         {
-            await context.Database.EnsureCreatedAsync();
+            await context.Database.MigrateAsync();
         }
         catch (Exception ex)
         {

@@ -20,7 +20,10 @@ internal sealed class DatabaseResetter : IAsyncDisposable
         var connection = new SqlConnection(connectionString);
 
         await connection.OpenAsync();
-        var respawner = await Respawner.CreateAsync(connection);
+        var respawner = await Respawner.CreateAsync(connection, new RespawnerOptions
+        {
+            TablesToIgnore = ["__EFMigrationsHistory"]
+        });
         await connection.CloseAsync();
         return new DatabaseResetter(connection, respawner);
     }
