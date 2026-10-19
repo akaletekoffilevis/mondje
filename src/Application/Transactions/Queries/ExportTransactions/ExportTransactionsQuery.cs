@@ -51,7 +51,7 @@ public class ExportTransactionsQueryHandler(IApplicationDbContext db)
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var baseQuery = TransactionFilters.Apply(
-            db.Transactions.AsNoTracking(),
+            db,
             query.Type, query.MinAmount, query.MaxAmount, query.Q, query.IncludeDeleted);
 
         DateTime? cursorTime = null;

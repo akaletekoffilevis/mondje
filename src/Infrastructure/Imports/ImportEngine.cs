@@ -5,6 +5,7 @@ using System.Text.Json;
 using Mondje.Application.Common.Interfaces;
 using Mondje.Application.Transactions.Common;
 using Mondje.Domain.Entities;
+using Mondje.Domain.Search;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -26,7 +27,7 @@ namespace Mondje.Infrastructure.Imports;
 /// </summary>
 public class ImportEngine(IConfiguration configuration, IApplicationDbContext db) : IImportEngine
 {
-    private const int ChunkSize = 50_000;
+    private const int ChunkSize = 20_000;
     private const int ErrorFlushSize = 1_000;
     private const int MaxRawLineLength = 1_000;
     private const int ReadBufferSize = 128 * 1024;
@@ -511,31 +512,51 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
     }
 
     /// <summary>
-    /// Copies the staged chunk into the staging table, then deduplicates and inserts it in
-    /// one statement. Retries on duplicate-key/deadlock: the failed statement rolled back
-    /// as a whole, so the next attempt simply sees the winner's rows as duplicates.
+    /// Writes one chunk: transactions (deduplicated by UUID) and the words of their
+    /// descriptions are committed in the same database transaction, so the ledger and
+    /// its search index never disagree. Duplicate-key/deadlock failures roll the whole
+    /// chunk back and are retried: the next attempt simply sees the winner's rows as
+    /// duplicates (challenge 8).
     /// </summary>
     private async Task<(int Inserted, int Duplicates)> FlushStagedAsync(
         SqlConnection connection, List<StagingRow> rows, CancellationToken cancellationToken)
     {
         await BulkCopyAsync(connection, rows, cancellationToken);
-        var inserted = await DedupInsertAsync(connection, cancellationToken);
+        await BulkCopyTokensAsync(connection, rows, cancellationToken);
 
-        using (var clear = connection.CreateCommand())
-        {
-            clear.CommandText = "DELETE FROM #Staging;";
-            await clear.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        return (inserted, rows.Count - inserted);
-    }
-
-    private static async Task<int> DedupInsertAsync(SqlConnection connection, CancellationToken cancellationToken)
-    {
         for (var attempt = 1; ; attempt++)
         {
-            using var cmd = connection.CreateCommand();
-            cmd.CommandText = @"
+            try
+            {
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                var inserted = await DedupInsertAsync(connection, (SqlTransaction)transaction, cancellationToken);
+                await InsertTokensAsync(connection, (SqlTransaction)transaction, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+
+                using (var clear = connection.CreateCommand())
+                {
+                    clear.CommandText = "DELETE FROM #Staging; DELETE FROM #StagingTokens;";
+                    await clear.ExecuteNonQueryAsync(cancellationToken);
+                }
+
+                return (inserted, rows.Count - inserted);
+            }
+            catch (SqlException ex) when ((ex.Number is 2601 or 2627 or 1205) && attempt < DedupMaxAttempts)
+            {
+                // 2601/2627: another import inserted the same UUIDs first (challenge 8).
+                // 1205: deadlock between two concurrent bulk inserts. The chunk
+                // transaction was rolled back as a whole, so retrying it is safe.
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), cancellationToken);
+            }
+        }
+    }
+
+    private static async Task<int> DedupInsertAsync(
+        SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
 WITH ranked AS (
     SELECT Id, Type, Amount, Description, Agency, ImportId, SourceLine, CreatedAtUtc,
            ROW_NUMBER() OVER (PARTITION BY Id ORDER BY SourceLine) AS rn
@@ -547,17 +568,29 @@ FROM ranked r
 WHERE r.rn = 1
   AND NOT EXISTS (SELECT 1 FROM Transactions t WHERE t.Id = r.Id);";
 
-            try
-            {
-                return await cmd.ExecuteNonQueryAsync(cancellationToken);
-            }
-            catch (SqlException ex) when ((ex.Number is 2601 or 2627 or 1205) && attempt < DedupMaxAttempts)
-            {
-                // 2601/2627: another import inserted the same UUIDs first (challenge 8).
-                // 1205: deadlock between two concurrent bulk inserts.
-                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), cancellationToken);
-            }
-        }
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Adds the words of this chunk to the search index. Rows skipped as duplicates
+    /// already have their words, hence the NOT EXISTS; the EXISTS keeps the foreign key
+    /// satisfied if a cancellation deleted the batch's rows concurrently.
+    /// </summary>
+    private static async Task InsertTokensAsync(
+        SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+INSERT INTO TransactionTokens (Token, CreatedAtUtc, TransactionId)
+SELECT DISTINCT s.Token, s.CreatedAtUtc, s.TransactionId
+FROM #StagingTokens s
+WHERE EXISTS (SELECT 1 FROM Transactions t WHERE t.Id = s.TransactionId)
+  AND NOT EXISTS (
+      SELECT 1 FROM TransactionTokens k
+      WHERE k.Token = s.Token AND k.CreatedAtUtc = s.CreatedAtUtc AND k.TransactionId = s.TransactionId);";
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task CreateStagingTableAsync(SqlConnection connection, CancellationToken ct)
@@ -565,6 +598,7 @@ WHERE r.rn = 1
         using var cmd = connection.CreateCommand();
         cmd.CommandText = @"
 IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;
+IF OBJECT_ID('tempdb..#StagingTokens') IS NOT NULL DROP TABLE #StagingTokens;
 CREATE TABLE #Staging (
     Id char(36) NOT NULL,
     Type varchar(6) NOT NULL,
@@ -574,6 +608,11 @@ CREATE TABLE #Staging (
     ImportId uniqueidentifier NOT NULL,
     SourceLine int NOT NULL,
     CreatedAtUtc datetime2(3) NOT NULL
+);
+CREATE TABLE #StagingTokens (
+    Token nvarchar(64) NOT NULL,
+    CreatedAtUtc datetime2(3) NOT NULL,
+    TransactionId char(36) NOT NULL
 );";
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -581,7 +620,9 @@ CREATE TABLE #Staging (
     private static async Task DropStagingTableAsync(SqlConnection connection, CancellationToken ct)
     {
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = "IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;";
+        cmd.CommandText = @"
+IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;
+IF OBJECT_ID('tempdb..#StagingTokens') IS NOT NULL DROP TABLE #StagingTokens;";
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -608,6 +649,36 @@ CREATE TABLE #Staging (
             table.Rows.Add(r.Id, r.Type, r.Amount, r.Description, (object?)r.Agency ?? DBNull.Value, r.ImportId, r.SourceLine, r.CreatedAtUtc);
         }
 
+        await bulk.WriteToServerAsync(table, ct);
+    }
+
+    /// <summary>Stages the normalised words of every valid line of the chunk.</summary>
+    private static async Task BulkCopyTokensAsync(SqlConnection connection, List<StagingRow> rows, CancellationToken ct)
+    {
+        var table = new DataTable();
+        table.Columns.Add("Token", typeof(string));
+        table.Columns.Add("CreatedAtUtc", typeof(DateTime));
+        table.Columns.Add("TransactionId", typeof(string));
+
+        foreach (var r in rows)
+        {
+            foreach (var token in SearchTokens.FromDescription(r.Description))
+            {
+                table.Rows.Add(token, r.CreatedAtUtc, r.Id);
+            }
+        }
+
+        if (table.Rows.Count == 0)
+        {
+            return;
+        }
+
+        using var bulk = new SqlBulkCopy(connection)
+        {
+            DestinationTableName = "#StagingTokens",
+            BatchSize = table.Rows.Count,
+            BulkCopyTimeout = 300,
+        };
         await bulk.WriteToServerAsync(table, ct);
     }
 

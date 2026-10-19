@@ -10,5 +10,7 @@ public interface IApplicationDbContext
 
     DbSet<ImportErrorLine> ImportErrorLines { get; }
 
+    DbSet<TransactionToken> TransactionTokens { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }

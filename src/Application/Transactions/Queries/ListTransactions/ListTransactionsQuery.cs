@@ -43,7 +43,7 @@ public class ListTransactionsQueryHandler(IApplicationDbContext db)
         var limit = Math.Clamp(query.Limit ?? DefaultLimit, 1, MaxLimit);
 
         var q = TransactionFilters.Apply(
-            db.Transactions.AsNoTracking(),
+            db,
             query.Type, query.MinAmount, query.MaxAmount, query.Q, query.IncludeDeleted);
 
         if (CursorCodec.TryParse(query.Cursor, out var cursorTicks, out var cursorId))

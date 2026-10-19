@@ -15,6 +15,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
 
     public DbSet<ImportErrorLine> ImportErrorLines => Set<ImportErrorLine>();
 
+    public DbSet<TransactionToken> TransactionTokens => Set<TransactionToken>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());

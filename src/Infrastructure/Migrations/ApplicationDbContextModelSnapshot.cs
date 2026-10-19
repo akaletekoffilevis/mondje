@@ -207,11 +207,39 @@ namespace Mondje.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Mondje.Domain.Entities.TransactionToken", b =>
+                {
+                    b.Property<string>("Token")
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("TransactionId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Token", "CreatedAtUtc", "TransactionId");
+
+                    b.HasIndex("TransactionId")
+                        .HasDatabaseName("IX_TransactionTokens_TransactionId");
+
+                    b.ToTable("TransactionTokens", (string)null);
+                });
+
             modelBuilder.Entity("Mondje.Domain.Entities.ImportErrorLine", b =>
                 {
                     b.HasOne("Mondje.Domain.Entities.ImportBatch", null)
                         .WithMany()
                         .HasForeignKey("ImportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Mondje.Domain.Entities.TransactionToken", b =>
+                {
+                    b.HasOne("Mondje.Domain.Entities.Transaction", null)
+                        .WithMany()
+                        .HasForeignKey("TransactionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

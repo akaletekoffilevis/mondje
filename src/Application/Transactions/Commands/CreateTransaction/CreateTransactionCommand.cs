@@ -3,6 +3,7 @@ using Mondje.Application.Common.Exceptions;
 using Mondje.Application.Common.Interfaces;
 using Mondje.Application.Transactions.Common;
 using Mondje.Domain.Entities;
+using Mondje.Domain.Search;
 using Microsoft.EntityFrameworkCore;
 
 namespace Mondje.Application.Transactions.Commands.CreateTransaction;
@@ -42,6 +43,18 @@ public class CreateTransactionCommandHandler(IApplicationDbContext db, TimeProvi
         };
 
         db.Transactions.Add(entity);
+
+        // Feed the word index in the same save: the row and its search words are
+        // written atomically (challenge 3).
+        foreach (var token in SearchTokens.FromDescription(entity.Description))
+        {
+            db.TransactionTokens.Add(new TransactionToken
+            {
+                Token = token,
+                TransactionId = entity.Id,
+                CreatedAtUtc = entity.CreatedAtUtc,
+            });
+        }
 
         try
         {

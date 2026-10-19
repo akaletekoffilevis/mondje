@@ -3,6 +3,7 @@ using Mondje.Application.Common.Exceptions;
 using Mondje.Application.Common.Interfaces;
 using Mondje.Application.Transactions.Common;
 using Mondje.Domain.Entities;
+using Mondje.Domain.Search;
 using Microsoft.EntityFrameworkCore;
 
 namespace Mondje.Application.Transactions.Commands.UpdateTransaction;
@@ -31,6 +32,22 @@ public class UpdateTransactionCommandHandler(IApplicationDbContext db, TimeProvi
         entity.Amount = amount;
         entity.Description = command.Description;
         entity.EditedAtUtc = Timestamp.Now(time);
+
+        // Rebuild this row's words so a search always matches the current text: the old
+        // words are deleted, the new ones inserted, both before the row is saved.
+        await db.TransactionTokens
+            .Where(k => k.TransactionId == id)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        foreach (var token in SearchTokens.FromDescription(entity.Description))
+        {
+            db.TransactionTokens.Add(new TransactionToken
+            {
+                Token = token,
+                TransactionId = entity.Id,
+                CreatedAtUtc = entity.CreatedAtUtc,
+            });
+        }
 
         await db.SaveChangesAsync(cancellationToken);
     }
