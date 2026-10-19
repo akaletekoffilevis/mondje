@@ -549,12 +549,13 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
                 var insertedIds = await DedupInsertAsync(connection, (SqlTransaction)transaction, cancellationToken);
                 var dedupMs = sw.ElapsedMilliseconds - bulkMs;
                 await BulkCopyTokensAsync(connection, (SqlTransaction)transaction, rows, insertedIds, cancellationToken);
+                await InsertTokensAsync(connection, (SqlTransaction)transaction, cancellationToken);
                 var tokensMs = sw.ElapsedMilliseconds - bulkMs - dedupMs;
                 await transaction.CommitAsync(cancellationToken);
 
                 using (var clear = connection.CreateCommand())
                 {
-                    clear.CommandText = "DELETE FROM #Staging;";
+                    clear.CommandText = "DELETE FROM #Staging; DELETE FROM #StagingTokens;";
                     await clear.ExecuteNonQueryAsync(cancellationToken);
                 }
 
@@ -623,7 +624,11 @@ ORDER BY r.Id;";
     private static async Task BulkCopyTokensAsync(
         SqlConnection connection, SqlTransaction transaction, List<StagingRow> rows, HashSet<string> insertedIds, CancellationToken ct)
     {
-        var tokens = new List<(string Token, DateTime CreatedAtUtc, string TransactionId)>();
+        var table = new DataTable();
+        table.Columns.Add("Token", typeof(string));
+        table.Columns.Add("CreatedAtUtc", typeof(DateTime));
+        table.Columns.Add("TransactionId", typeof(string));
+
         foreach (var r in rows)
         {
             if (!insertedIds.Contains(r.Id))
@@ -633,33 +638,37 @@ ORDER BY r.Id;";
 
             foreach (var token in SearchTokens.FromDescription(r.Description))
             {
-                tokens.Add((token, r.CreatedAtUtc, r.Id));
+                table.Rows.Add(token, r.CreatedAtUtc, r.Id);
             }
         }
 
-        if (tokens.Count == 0)
+        if (table.Rows.Count == 0)
         {
             return;
         }
 
-        tokens.Sort((a, b) => string.CompareOrdinal(a.Token, b.Token));
-
-        var table = new DataTable();
-        table.Columns.Add("Token", typeof(string));
-        table.Columns.Add("CreatedAtUtc", typeof(DateTime));
-        table.Columns.Add("TransactionId", typeof(string));
-        foreach (var (token, createdAtUtc, transactionId) in tokens)
+        using var bulk = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction)
         {
-            table.Rows.Add(token, createdAtUtc, transactionId);
-        }
-
-        using var bulk = new SqlBulkCopy(connection, SqlBulkCopyOptions.TableLock, transaction)
-        {
-            DestinationTableName = "TransactionTokens",
+            DestinationTableName = "#StagingTokens",
             BatchSize = table.Rows.Count,
             BulkCopyTimeout = 300,
         };
         await bulk.WriteToServerAsync(table, ct);
+    }
+
+    private static async Task InsertTokensAsync(
+        SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandTimeout = WriteCommandTimeoutSeconds;
+        cmd.CommandText = @"
+INSERT INTO TransactionTokens WITH (TABLOCK) (Token, CreatedAtUtc, TransactionId)
+SELECT Token, CreatedAtUtc, TransactionId
+FROM #StagingTokens
+ORDER BY Token, CreatedAtUtc, TransactionId;";
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task CreateStagingTableAsync(SqlConnection connection, CancellationToken ct)
@@ -667,6 +676,7 @@ ORDER BY r.Id;";
         using var cmd = connection.CreateCommand();
         cmd.CommandText = @"
 IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;
+IF OBJECT_ID('tempdb..#StagingTokens') IS NOT NULL DROP TABLE #StagingTokens;
 CREATE TABLE #Staging (
     Id char(36) NOT NULL,
     Type varchar(6) NOT NULL,
@@ -676,6 +686,11 @@ CREATE TABLE #Staging (
     ImportId uniqueidentifier NOT NULL,
     SourceLine int NOT NULL,
     CreatedAtUtc datetime2(3) NOT NULL
+);
+CREATE TABLE #StagingTokens (
+    Token nvarchar(64) NOT NULL,
+    CreatedAtUtc datetime2(3) NOT NULL,
+    TransactionId char(36) NOT NULL
 );";
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -683,7 +698,9 @@ CREATE TABLE #Staging (
     private static async Task DropStagingTableAsync(SqlConnection connection, CancellationToken ct)
     {
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = "IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;";
+        cmd.CommandText = @"
+IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;
+IF OBJECT_ID('tempdb..#StagingTokens') IS NOT NULL DROP TABLE #StagingTokens;";
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

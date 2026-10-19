@@ -189,9 +189,6 @@ namespace Mondje.Infrastructure.Migrations
                         .HasDatabaseName("IX_Transactions_CreatedAtUtc_Id")
                         .HasFilter("[DeletedAtUtc] IS NULL");
 
-                    b.HasIndex("Type", "Amount")
-                        .HasDatabaseName("IX_Transactions_Type_Amount");
-
                     b.ToTable("Transactions", null, t =>
                         {
                             t.HasCheckConstraint("CK_Transactions_Amount", "[Amount] > 0");

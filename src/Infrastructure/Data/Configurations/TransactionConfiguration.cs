@@ -58,10 +58,6 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
             .HasDatabaseName("IX_Transactions_CreatedAtUtc_Id")
             .HasFilter("[DeletedAtUtc] IS NULL");
 
-        // Search by type + amount range (challenge 3).
-        builder.HasIndex(t => new { t.Type, t.Amount })
-            .HasDatabaseName("IX_Transactions_Type_Amount");
-
         // Import provenance lookup (challenge 7) and surgical cancellation (challenge 9).
         builder.HasIndex(t => t.ImportId)
             .HasDatabaseName("IX_Transactions_ImportId");
