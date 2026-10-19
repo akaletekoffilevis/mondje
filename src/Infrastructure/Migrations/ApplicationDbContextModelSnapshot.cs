@@ -22,6 +22,116 @@ namespace Mondje.Infrastructure.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("Mondje.Domain.Entities.ImportBatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Agency")
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int>("DuplicateCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ErrorCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<long>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<int>("InsertedCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RequestId")
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("StoredFileName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<int>("TotalLines")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("IX_ImportBatches_Status");
+
+                    b.HasIndex("CreatedAtUtc", "Id")
+                        .HasDatabaseName("IX_ImportBatches_CreatedAtUtc_Id");
+
+                    b.ToTable("ImportBatches", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ImportBatches_Format", "[Format] IN ('TXT', 'NDJSON')");
+
+                            t.HasCheckConstraint("CK_ImportBatches_Status", "[Status] IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')");
+                        });
+                });
+
+            modelBuilder.Entity("Mondje.Domain.Entities.ImportErrorLine", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<Guid>("ImportId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<int>("LineNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RawLine")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(512)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ImportId", "LineNumber")
+                        .HasDatabaseName("IX_ImportErrorLines_ImportId_LineNumber");
+
+                    b.ToTable("ImportErrorLines", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ImportErrorLines_Kind", "[Kind] IN ('FORMAT', 'VALIDATION')");
+                        });
+                });
+
             modelBuilder.Entity("Mondje.Domain.Entities.Transaction", b =>
                 {
                     b.Property<string>("Id")
@@ -83,6 +193,15 @@ namespace Mondje.Infrastructure.Migrations
 
                             t.HasCheckConstraint("CK_Transactions_Type", "[Type] IN ('CREDIT', 'DEBIT')");
                         });
+                });
+
+            modelBuilder.Entity("Mondje.Domain.Entities.ImportErrorLine", b =>
+                {
+                    b.HasOne("Mondje.Domain.Entities.ImportBatch", null)
+                        .WithMany()
+                        .HasForeignKey("ImportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

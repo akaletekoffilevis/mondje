@@ -490,3 +490,6 @@ $RECYCLE.BIN/
 *.db
 *.db-shm
 *.db-wal
+
+# Files uploaded for imports (kept on disk to allow resume after a restart)
+uploads/

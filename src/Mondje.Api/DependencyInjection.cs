@@ -21,5 +21,7 @@ public static class DependencyInjection
         });
 
         builder.Services.AddCors();
+        builder.Services.AddSingleton<ImportQueue>();
+        builder.Services.AddHostedService<ImportWorker>();
     }
 }

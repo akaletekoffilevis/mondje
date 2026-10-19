@@ -11,6 +11,10 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
 
     public DbSet<Transaction> Transactions => Set<Transaction>();
 
+    public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
+
+    public DbSet<ImportErrorLine> ImportErrorLines => Set<ImportErrorLine>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());

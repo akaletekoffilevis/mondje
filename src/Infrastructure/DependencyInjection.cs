@@ -1,4 +1,5 @@
 using Mondje.Application.Common.Interfaces;
+using Mondje.Infrastructure.Imports;
 using Mondje.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -21,5 +22,6 @@ public static class DependencyInjection
         builder.Services.AddScoped<ApplicationDbContextInitialiser>();
 
         builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddScoped<IImportEngine, ImportEngine>();
     }
 }

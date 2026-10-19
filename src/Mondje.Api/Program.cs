@@ -31,7 +31,7 @@ app.UseCors(static policy =>
         .AllowAnyHeader()
         .AllowAnyOrigin());
 
-app.UseExceptionHandler(options => { });
+app.UseExceptionHandler();
 
 app.MapEndpoints(typeof(Program).Assembly);
 
