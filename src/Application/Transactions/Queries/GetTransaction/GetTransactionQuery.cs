@@ -22,6 +22,8 @@ public class GetTransactionQueryHandler(IApplicationDbContext db)
             .FirstOrDefaultAsync(t => t.Id == id, cancellationToken)
             ?? throw new NotFoundException($"Transaction '{id}' introuvable.");
 
-        return TransactionDto.From(entity);
+        // One extra dictionary query resolves the source file name (challenge 7).
+        var withSource = await TransactionDto.FromAsync(db, [entity], cancellationToken);
+        return withSource[0];
     }
 }

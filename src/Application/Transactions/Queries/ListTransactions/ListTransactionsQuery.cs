@@ -42,32 +42,9 @@ public class ListTransactionsQueryHandler(IApplicationDbContext db)
     {
         var limit = Math.Clamp(query.Limit ?? DefaultLimit, 1, MaxLimit);
 
-        var q = db.Transactions.AsNoTracking().AsQueryable();
-
-        if (query.IncludeDeleted != true)
-        {
-            q = q.Where(t => t.DeletedAtUtc == null);
-        }
-
-        if (!string.IsNullOrEmpty(query.Type))
-        {
-            q = q.Where(t => t.Type == query.Type);
-        }
-
-        if (query.MinAmount is long min)
-        {
-            q = q.Where(t => t.Amount >= min);
-        }
-
-        if (query.MaxAmount is long max)
-        {
-            q = q.Where(t => t.Amount <= max);
-        }
-
-        if (!string.IsNullOrEmpty(query.Q))
-        {
-            q = q.Where(t => t.Description.Contains(query.Q));
-        }
+        var q = TransactionFilters.Apply(
+            db.Transactions.AsNoTracking(),
+            query.Type, query.MinAmount, query.MaxAmount, query.Q, query.IncludeDeleted);
 
         if (CursorCodec.TryParse(query.Cursor, out var cursorTicks, out var cursorId))
         {
@@ -94,11 +71,9 @@ public class ListTransactionsQueryHandler(IApplicationDbContext db)
 
         var nextCursor = hasMore && rows.Count > 0 ? CursorCodec.Encode(rows[^1].CreatedAtUtc, rows[^1].Id) : null;
 
-        return new TransactionListResponse(
-            rows.Select(TransactionDto.From).ToList(),
-            nextCursor,
-            hasMore,
-            limit);
+        var items = await TransactionDto.FromAsync(db, rows, cancellationToken);
+
+        return new TransactionListResponse(items, nextCursor, hasMore, limit);
     }
 }
 

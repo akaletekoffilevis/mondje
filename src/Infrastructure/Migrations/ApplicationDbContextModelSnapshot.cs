@@ -173,6 +173,12 @@ namespace Mondje.Infrastructure.Migrations
                     b.HasIndex("Agency")
                         .HasDatabaseName("IX_Transactions_Agency");
 
+                    b.HasIndex("CreatedAtUtc")
+                        .HasDatabaseName("IX_Transactions_Balance")
+                        .HasFilter("[DeletedAtUtc] IS NULL");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("CreatedAtUtc"), new[] { "Type", "Amount" });
+
                     b.HasIndex("ImportId")
                         .HasDatabaseName("IX_Transactions_ImportId");
 

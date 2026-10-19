@@ -164,6 +164,20 @@ public class TransactionsApiTests : TestBase
         body.ShouldNotContain("   at "); // no stack trace leaked
     }
 
+    [Test]
+    public async Task Create_malformed_json_body_returns_422_with_french_reason()
+    {
+        // Un guillemet non échappé casse la syntaxe : c'est une donnée invalide, pas une
+        // erreur serveur — la règle impose 422 avec la raison, jamais une trace.
+        var response = await Client.PostAsync("/api/Transactions",
+            Json("""{"id":"aabbccdd-0000-4000-8000-000000000007","description":"cassé " et fin"}"""));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldContain("JSON valide");
+        body.ShouldNotContain("   at ");
+    }
+
     private record ListPage(TransactionPayload[] Items, string? NextCursor, bool HasMore, int Limit);
 
     private record TransactionPayload(

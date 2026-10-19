@@ -69,5 +69,12 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
         // Balance per agency (bonus challenge 5).
         builder.HasIndex(t => t.Agency)
             .HasDatabaseName("IX_Transactions_Agency");
+
+        // Balance at a past date without recalculating the table (challenge 11): narrow
+        // covering index over live rows, so SUM(CASE WHEN Type ...) is index-only.
+        builder.HasIndex(t => t.CreatedAtUtc)
+            .HasDatabaseName("IX_Transactions_Balance")
+            .IncludeProperties(t => new { t.Type, t.Amount })
+            .HasFilter("[DeletedAtUtc] IS NULL");
     }
 }

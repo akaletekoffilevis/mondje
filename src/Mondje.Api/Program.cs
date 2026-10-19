@@ -33,6 +33,9 @@ app.UseCors(static policy =>
 
 app.UseExceptionHandler();
 
+// Rule: every request carries an identifier in the logs (and in X-Request-Id).
+app.UseMiddleware<RequestIdMiddleware>();
+
 app.MapEndpoints(typeof(Program).Assembly);
 
 app.Run();

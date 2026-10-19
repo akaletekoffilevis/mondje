@@ -38,7 +38,7 @@ public class Imports : IEndpointGroup
         {
             // Nullable on purpose: a non-nullable IFormFile makes the framework throw
             // BadHttpRequestException before this code runs (a 500 with no explanation).
-            return Unprocessable("file", "Un fichier non vide est requis (champ 'file').");
+            return ApiErrors.Unprocessable("file", "Un fichier non vide est requis (champ 'file').");
         }
 
         // Detect the format from the first non-empty line.
@@ -50,7 +50,7 @@ public class Imports : IEndpointGroup
 
         if (firstLine is not null && firstLine.TrimStart().StartsWith('['))
         {
-            return Unprocessable("file",
+            return ApiErrors.Unprocessable("file",
                 "Un fichier NDJSON ne doit pas contenir de tableau JSON : chaque ligne doit être un objet JSON indépendant.");
         }
 
@@ -124,17 +124,6 @@ public class Imports : IEndpointGroup
         await sender.Send(new CancelImportCommand { ImportId = id }, cancellationToken);
         return TypedResults.NoContent();
     }
-
-    /// <summary>422 avec la raison en français, sans aucune trace technique.</summary>
-    private static ProblemHttpResult Unprocessable(string field, string message) =>
-        TypedResults.Problem(new ValidationProblemDetails(new Dictionary<string, string[]>
-        {
-            [field] = [message],
-        })
-        {
-            Status = StatusCodes.Status422UnprocessableEntity,
-            Title = "One or more validation errors occurred.",
-        });
 
     private static async Task<string?> ReadFirstNonEmptyLineAsync(Stream stream)
     {

@@ -43,6 +43,14 @@ public class ProblemDetailsExceptionHandler : IExceptionHandler
                 Detail = ce.Message,
                 Type = "https://tools.ietf.org/html/rfc9110#section-15.5.10"
             }),
+            // Malformed JSON body: invalid data, so 422 with a French reason (no trace).
+            BadHttpRequestException => (StatusCodes.Status422UnprocessableEntity, (object)new ProblemDetails
+            {
+                Status = StatusCodes.Status422UnprocessableEntity,
+                Title = "Unprocessable Content.",
+                Detail = "Le corps de la requête n'est pas un JSON valide : vérifiez la syntaxe (guillemets échappés, virgules, objet complet).",
+                Type = "https://tools.ietf.org/html/rfc9110#section-15.5.13"
+            }),
             _ => (0, null)
         };
 
