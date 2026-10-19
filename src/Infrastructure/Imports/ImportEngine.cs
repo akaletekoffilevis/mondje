@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Mondje.Application.Common.Interfaces;
+using Mondje.Application.Imports.Common;
 using Mondje.Application.Transactions.Common;
 using Mondje.Domain.Entities;
 using Mondje.Domain.Search;
@@ -250,9 +251,7 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
                 // The cancel endpoint deleted the rows it found; delete any straggler this
                 // engine inserted after that moment. Manually edited rows are kept (challenge 9).
                 batch.Status = ImportBatch.Cancelled;
-                await db.Transactions
-                    .Where(t => t.ImportId == importId && t.EditedAtUtc == null)
-                    .ExecuteDeleteAsync(cancellationToken);
+                await ImportCleanup.DeleteUneditedRowsAsync(db, importId, cancellationToken);
 
                 batch.CompletedAtUtc ??= Truncate(DateTime.UtcNow);
             }
@@ -269,6 +268,13 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
 
             await db.SaveChangesAsync(cancellationToken);
         }
+        catch (OperationCanceledException)
+        {
+            // Host shutdown: the batch keeps its RUNNING status and its durable byte
+            // offset, so the next start resumes exactly where it stopped (challenge 12)
+            // instead of failing the import.
+            throw;
+        }
         catch (Exception ex)
         {
             // A cancellation wins over the failure caused by the interruption.
@@ -278,7 +284,13 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
                 .Select(b => b.Status)
                 .FirstOrDefaultAsync(CancellationToken.None);
 
-            if (liveStatus != ImportBatch.Cancelled)
+            if (liveStatus == ImportBatch.Cancelled)
+            {
+                // The engine died mid-way after the cancel endpoint ran: remove whatever
+                // it managed to write so only untouched rows of this import disappear.
+                await ImportCleanup.DeleteUneditedRowsAsync(db, importId, CancellationToken.None);
+            }
+            else
             {
                 batch.Status = ImportBatch.Failed;
                 batch.FailureReason = ex.Message.Length > 512 ? ex.Message[..512] : ex.Message;
@@ -539,7 +551,9 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
                     await clear.ExecuteNonQueryAsync(cancellationToken);
                 }
 
-                return (inserted, rows.Count - inserted);
+                var duplicates = rows.Count - inserted;
+                rows.Clear(); // the chunk is written: the next one starts from an empty list
+                return (inserted, duplicates);
             }
             catch (SqlException ex) when ((ex.Number is 2601 or 2627 or 1205) && attempt < DedupMaxAttempts)
             {
