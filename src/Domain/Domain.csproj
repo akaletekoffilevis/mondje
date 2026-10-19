@@ -1,0 +1,9 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Mondje.Domain</RootNamespace>
+    <AssemblyName>Mondje.Domain</AssemblyName>
+  </PropertyGroup>
+
+
+</Project>

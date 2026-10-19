@@ -1,0 +1,29 @@
+@model Mondje.Web.Services.ApiStatus?
+@{
+    ViewData["Title"] = "Accueil";
+}
+
+<div class="text-center">
+    <h1 class="display-4">Mondje</h1>
+    <p class="lead">Le carnet qui ne doit jamais perdre un franc.</p>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">État de l'API</div>
+            <div class="card-body">
+                @if (Model is not null)
+                {
+                    <p class="mb-1"><span class="badge bg-success">En ligne</span></p>
+                    <p class="mb-1">Version : @Model.version</p>
+                    <p class="mb-0">Heure API (UTC) : @Model.utc.ToString("u")</p>
+                }
+                else
+                {
+                    <p class="mb-0"><span class="badge bg-danger">API injoignable</span> — vérifiez que l'API Mondje tourne sur <code>http://localhost:5002</code>.</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
