@@ -1,0 +1,21 @@
+@model Mondje.Web.Models.CreateTransactionRequest
+@{
+    ViewData["Title"] = "Nouvelle transaction";
+}
+<h1>Nouvelle transaction</h1>
+<form asp-action="Create" method="post">
+    @Html.AntiForgeryToken()
+    <div class="mb-3"><label class="form-label">Id (UUID)</label><input asp-for="id" class="form-control" /></div>
+    <div class="mb-3">
+        <label class="form-label">Type</label>
+        <select asp-for="type" class="form-select">
+            <option value="CREDIT">CREDIT</option>
+            <option value="DEBIT">DEBIT</option>
+        </select>
+    </div>
+    <div class="mb-3"><label class="form-label">Montant (FCFA)</label><input asp-for="amount" type="number" class="form-control" /></div>
+    <div class="mb-3"><label class="form-label">Description (≤255)</label><input asp-for="description" class="form-control" /></div>
+    <div class="mb-3"><label class="form-label">Agence</label><input asp-for="agency" class="form-control" /></div>
+    <button class="btn btn-primary" type="submit">Créer</button>
+    <a asp-action="Index" class="btn btn-secondary">Annuler</a>
+</form>

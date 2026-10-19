@@ -1,0 +1,26 @@
+@model Mondje.Web.Models.BalanceDto
+@{
+    ViewData["Title"] = "Solde";
+    var at = ViewBag.At as DateTime?;
+}
+<h1>Solde</h1>
+<form method="get" class="row g-2 mb-3">
+    <div class="col-md-4"><input name="at" type="datetime-local" class="form-control" value="@(at?.ToString("yyyy-MM-ddTHH:mm"))" /></div>
+    <div class="col-md-2"><button class="btn btn-primary" type="submit">Calculer</button></div>
+</form>
+@if (Model is null)
+{
+    <div class="alert alert-warning">API indisponible.</div>
+}
+else
+{
+    <div class="card">
+        <div class="card-body">
+            <p><strong>Date :</strong> @Model.at.ToString("yyyy-MM-dd HH:mm:ss") UTC</p>
+            <p><strong>Crédits :</strong> @Model.credit.ToString("N0") FCFA</p>
+            <p><strong>Débits :</strong> @Model.debit.ToString("N0") FCFA</p>
+            <p class="fs-4"><strong>Solde :</strong> @Model.balance.ToString("N0") FCFA</p>
+            <p><strong>Transactions :</strong> @Model.transactionCount</p>
+        </div>
+    </div>
+}

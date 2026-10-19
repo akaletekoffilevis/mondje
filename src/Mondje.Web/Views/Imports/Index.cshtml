@@ -1,0 +1,48 @@
+@model Mondje.Web.Models.ImportListResponse
+@{
+    ViewData["Title"] = "Imports";
+}
+<h1>Imports</h1>
+<form asp-action="Upload" method="post" enctype="multipart/form-data" class="row g-2 mb-3">
+    @Html.AntiForgeryToken()
+    <div class="col-md-5"><input type="file" name="file" class="form-control" accept=".txt,.ndjson,.json" /></div>
+    <div class="col-md-3"><input name="agency" class="form-control" placeholder="Agence (optionnel)" /></div>
+    <div class="col-md-2"><button class="btn btn-success" type="submit">Importer</button></div>
+</form>
+
+@if (Model is null)
+{
+    <div class="alert alert-warning">API indisponible.</div>
+}
+else
+{
+    <table class="table table-sm table-striped">
+        <thead><tr><th>Fichier</th><th>Format</th><th>Statut</th><th>Progression</th><th>Insérées</th><th>Doublons</th><th>Erreurs</th><th>Durée</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var i in Model.items)
+        {
+            <tr>
+                <td>@i.fileName</td>
+                <td>@i.format</td>
+                <td>@i.status</td>
+                <td>@i.progressPercent % (@i.processedLines/@i.totalLines)</td>
+                <td>@i.insertedCount</td>
+                <td>@i.duplicateCount</td>
+                <td>@i.errorCount</td>
+                <td>@(i.durationMs is not null ? (i.durationMs.Value / 1000.0).ToString("F1") + " s" : "—")</td>
+                <td>
+                    <a asp-action="Details" asp-route-id="@i.id" class="btn btn-sm btn-outline-primary">Détail</a>
+                    @if (i.errorCount > 0)
+                    {
+                        <a asp-action="Errors" asp-route-id="@i.id" class="btn btn-sm btn-outline-warning">Erreurs</a>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    @if (Model.hasMore && Model.nextCursor is not null)
+    {
+        <a class="btn btn-outline-primary" asp-action="Index" asp-route-cursor="@Model.nextCursor">Page suivante →</a>
+    }
+}

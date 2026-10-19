@@ -1,0 +1,49 @@
+@model Mondje.Web.Models.ImportDto
+@{
+    ViewData["Title"] = "Import " + Model.fileName;
+}
+<h1>Import @Model.fileName</h1>
+<div id="import-card">
+    <p><strong>Statut :</strong> <span id="status">@Model.status</span></p>
+    <p><strong>Progression :</strong> <span id="progress">@Model.progressPercent</span> % — <span id="processed">@Model.processedLines</span>/@Model.totalLines lignes</p>
+    <div class="progress mb-2"><div id="bar" class="progress-bar" style="width:@(Model.progressPercent)%">@Model.progressPercent%</div></div>
+    <p>Insérées : <span id="inserted">@Model.insertedCount</span> — Doublons : <span id="dup">@Model.duplicateCount</span> — Erreurs : <span id="errs">@Model.errorCount</span></p>
+    <p>Octets : <span id="bytes">@Model.bytesProcessed</span>/@Model.fileSizeBytes</p>
+    <p>Durée serveur : <span id="dur">@(Model.durationMs is null ? "—" : (Model.durationMs.Value / 1000.0).ToString("F1") + " s")</span></p>
+    @if (Model.errorCount > 0)
+    {
+        <a asp-action="Errors" asp-route-id="@Model.id" class="btn btn-warning">Voir les @Model.errorCount erreurs</a>
+    }
+    @if (Model.status is "RUNNING" or "PENDING")
+    {
+        <form asp-action="Cancel" asp-route-id="@Model.id" method="post" style="display:inline">@Html.AntiForgeryToken()<button class="btn btn-danger" onclick="return confirm('Annuler cet import ?')">Annuler</button></form>
+    }
+    <a asp-action="Index" class="btn btn-secondary">Retour</a>
+</div>
+
+@section Scripts {
+<script>
+(function(){
+    var id = "@Model.id";
+    var terminal = ["COMPLETED","FAILED","CANCELLED"];
+    function poll(){
+        fetch("http://localhost:5002/api/Imports/" + id).then(r=>r.json()).then(d=>{
+            document.getElementById("status").textContent = d.status;
+            document.getElementById("progress").textContent = d.progressPercent;
+            document.getElementById("processed").textContent = d.processedLines;
+            document.getElementById("inserted").textContent = d.insertedCount;
+            document.getElementById("dup").textContent = d.duplicateCount;
+            document.getElementById("errs").textContent = d.errorCount;
+            document.getElementById("bytes").textContent = d.bytesProcessed;
+            var bar = document.getElementById("bar");
+            bar.style.width = d.progressPercent + "%";
+            bar.textContent = d.progressPercent + "%";
+            if (d.durationMs) document.getElementById("dur").textContent = (d.durationMs/1000).toFixed(1) + " s";
+            if (terminal.indexOf(d.status) < 0) setTimeout(poll, 2000);
+            else location.reload();
+        }).catch(()=>setTimeout(poll, 3000));
+    }
+    if (terminal.indexOf("@Model.status") < 0) setTimeout(poll, 2000);
+})();
+</script>
+}

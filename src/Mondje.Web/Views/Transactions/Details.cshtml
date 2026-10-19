@@ -1,0 +1,29 @@
+@model Mondje.Web.Models.TransactionDto
+@{
+    ViewData["Title"] = "Détail transaction";
+}
+<h1>Transaction @Model.id</h1>
+<dl class="row">
+    <dt class="col-sm-3">Type</dt><dd class="col-sm-9">@Model.type</dd>
+    <dt class="col-sm-3">Montant</dt><dd class="col-sm-9">@Model.amount.ToString("N0") FCFA</dd>
+    <dt class="col-sm-3">Description</dt><dd class="col-sm-9">@Model.description</dd>
+    <dt class="col-sm-3">Date</dt><dd class="col-sm-9">@Model.createdAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</dd>
+    <dt class="col-sm-3">Agence</dt><dd class="col-sm-9">@(Model.agency ?? "—")</dd>
+    <dt class="col-sm-3">Fichier source</dt><dd class="col-sm-9">@(Model.sourceFileName ?? "—")</dd>
+    <dt class="col-sm-3">Ligne source</dt><dd class="col-sm-9">@(Model.sourceLine?.ToString() ?? "—")</dd>
+    <dt class="col-sm-3">Import</dt><dd class="col-sm-9">@(Model.importId?.ToString() ?? "—")</dd>
+    <dt class="col-sm-3">Éditée</dt><dd class="col-sm-9">@(Model.editedAtUtc?.ToString("yyyy-MM-dd HH:mm") ?? "jamais")</dd>
+    <dt class="col-sm-3">Supprimée</dt><dd class="col-sm-9">@(Model.deletedAtUtc?.ToString("yyyy-MM-dd HH:mm") ?? "non")</dd>
+</dl>
+<p>
+    @if (Model.deletedAtUtc is null)
+    {
+        <a asp-action="Edit" asp-route-id="@Model.id" class="btn btn-warning">Modifier</a>
+        <form asp-action="Delete" asp-route-id="@Model.id" method="post" style="display:inline">@Html.AntiForgeryToken()<button class="btn btn-danger" onclick="return confirm('Supprimer ?')">Supprimer</button></form>
+    }
+    else
+    {
+        <form asp-action="Restore" asp-route-id="@Model.id" method="post" style="display:inline">@Html.AntiForgeryToken()<button class="btn btn-success">Restaurer</button></form>
+    }
+    <a asp-action="Index" class="btn btn-secondary">Retour</a>
+</p>

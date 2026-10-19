@@ -1,0 +1,36 @@
+@model Mondje.Web.Models.ImportErrorListResponse
+@{
+    ViewData["Title"] = "Erreurs d'import";
+    var imp = ViewBag.Import as Mondje.Web.Models.ImportDto;
+}
+<h1>Erreurs — @imp?.fileName</h1>
+<p class="text-muted">@Model?.items.Count erreurs affichées (sur @imp?.errorCount au total).</p>
+<table class="table table-sm table-striped">
+    <thead><tr><th>Ligne</th><th>Kind</th><th>Raison</th><th></th></tr></thead>
+    <tbody>
+    @foreach (var e in (Model?.items ?? new()))
+    {
+        <tr>
+            <td>@e.lineNumber</td>
+            <td>@e.kind</td>
+            <td>@e.reason</td>
+            <td><button class="btn btn-sm btn-outline-secondary" onclick="showLine(@e.lineNumber, @Json.Serialize(e.rawLine))">Voir la ligne brute</button></td>
+        </tr>
+    }
+    </tbody>
+</table>
+<div id="rawline-box" class="alert alert-secondary d-none">
+    <strong>Ligne <span id="rl-line"></span> :</strong>
+    <pre id="rl-content" class="mb-0"></pre>
+</div>
+<a asp-action="Details" asp-route-id="@imp?.id" class="btn btn-secondary">Retour</a>
+
+@section Scripts {
+<script>
+function showLine(line, content){
+    document.getElementById("rl-line").textContent = line;
+    document.getElementById("rl-content").textContent = content;
+    document.getElementById("rawline-box").classList.remove("d-none");
+}
+</script>
+}

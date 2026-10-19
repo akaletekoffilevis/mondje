@@ -1,0 +1,66 @@
+@model Mondje.Web.Models.TransactionListResponse
+@{
+    ViewData["Title"] = "Transactions";
+    var type = ViewBag.Type as string;
+    var minAmount = ViewBag.MinAmount as long?;
+    var maxAmount = ViewBag.MaxAmount as long?;
+    var q = ViewBag.Q as string;
+}
+<h1>Transactions</h1>
+<form method="get" class="row g-2 mb-3">
+    <div class="col-md-2">
+        <select name="type" class="form-select">
+            <option value="">Tous types</option>
+            <option value="CREDIT" selected="@(type=="CREDIT")">CREDIT</option>
+            <option value="DEBIT" selected="@(type=="DEBIT")">DEBIT</option>
+        </select>
+    </div>
+    <div class="col-md-2"><input name="minAmount" type="number" class="form-control" placeholder="Montant min" value="@minAmount" /></div>
+    <div class="col-md-2"><input name="maxAmount" type="number" class="form-control" placeholder="Montant max" value="@maxAmount" /></div>
+    <div class="col-md-3"><input name="q" class="form-control" placeholder="Mot dans la description" value="@q" /></div>
+    <div class="col-md-1"><button class="btn btn-primary w-100" type="submit">Filtrer</button></div>
+    <div class="col-md-2"><a class="btn btn-success w-100" asp-action="Create">+ Nouvelle</a></div>
+</form>
+
+@if (Model is null)
+{
+    <div class="alert alert-warning">API indisponible.</div>
+}
+else
+{
+    <table class="table table-sm table-striped">
+        <thead><tr><th>Id</th><th>Type</th><th>Montant</th><th>Description</th><th>Date</th><th>Fichier</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var t in Model.items)
+        {
+            <tr>
+                <td><small>@t.id.Substring(0,8)…</small></td>
+                <td>@t.type</td>
+                <td>@t.amount.ToString("N0")</td>
+                <td>@t.description</td>
+                <td>@t.createdAtUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                <td><small>@t.sourceFileName</small></td>
+                <td>
+                    <a asp-action="Details" asp-route-id="@t.id" class="btn btn-sm btn-outline-primary">Détail</a>
+                    @if (t.deletedAtUtc is null)
+                    {
+                        <a asp-action="Edit" asp-route-id="@t.id" class="btn btn-sm btn-outline-secondary">Modifier</a>
+                        <form asp-action="Delete" asp-route-id="@t.id" method="post" style="display:inline">@Html.AntiForgeryToken()<button class="btn btn-sm btn-outline-danger" onclick="return confirm('Supprimer ?')">Suppr.</button></form>
+                    }
+                    else
+                    {
+                        <form asp-action="Restore" asp-route-id="@t.id" method="post" style="display:inline">@Html.AntiForgeryToken()<button class="btn btn-sm btn-outline-success">Restaurer</button></form>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    <div class="d-flex justify-content-between">
+        @if (Model.hasMore && Model.nextCursor is not null)
+        {
+            <a class="btn btn-outline-primary" asp-action="Index" asp-route-type="@type" asp-route-minAmount="@minAmount" asp-route-maxAmount="@maxAmount" asp-route-q="@q" asp-route-cursor="@Model.nextCursor">Page suivante →</a>
+        }
+        else { <span class="text-muted">Fin de la liste.</span> }
+    </div>
+}
