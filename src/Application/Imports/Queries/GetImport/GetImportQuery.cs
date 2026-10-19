@@ -24,8 +24,27 @@ public class GetImportQueryHandler(IApplicationDbContext db)
         return ToDto(b);
     }
 
-    internal static ImportDto ToDto(ImportBatch b) => new(
-        b.Id, b.FileName, b.Format, b.Agency, b.Status, b.FileSizeBytes,
-        b.TotalLines, b.InsertedCount, b.DuplicateCount, b.ErrorCount,
-        b.FailureReason, b.CreatedAtUtc, b.StartedAtUtc, b.CompletedAtUtc);
+    internal static ImportDto ToDto(ImportBatch b)
+    {
+        // Challenge 2: the report shows the real duration. While running, the engine
+        // saves ProcessedLines every 5 s, so the percentage is live (challenge 6).
+        long? durationMs = null;
+        if (b.StartedAtUtc is DateTime started)
+        {
+            var elapsed = (b.CompletedAtUtc ?? DateTime.UtcNow) - started;
+            durationMs = (long)(elapsed > TimeSpan.Zero ? elapsed : TimeSpan.Zero).TotalMilliseconds;
+        }
+
+        var percent = b.Status == ImportBatch.Completed
+            ? 100
+            : b.TotalLines > 0
+                ? (int)Math.Min(99, 100L * b.ProcessedLines / b.TotalLines)
+                : 0;
+
+        return new ImportDto(
+            b.Id, b.FileName, b.Format, b.Agency, b.Status, b.FileSizeBytes,
+            b.TotalLines, b.InsertedCount, b.DuplicateCount, b.ErrorCount,
+            b.FailureReason, b.CreatedAtUtc, b.StartedAtUtc, b.CompletedAtUtc,
+            b.ProcessedLines, b.BytesProcessed, percent, durationMs);
+    }
 }

@@ -1,7 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Mondje.Application.Common.Interfaces;
+using Mondje.Application.Imports.Commands.ProcessImport;
 using Mondje.Application.Imports.Common;
+using Mondje.Domain.Entities;
+using Mondje.Infrastructure.Imports;
 
 namespace Mondje.Application.FunctionalTests.Imports;
 
@@ -209,6 +217,152 @@ public class ImportsApiTests : TestBase
             "/api/Transactions?limit=100");
         list!.items.Count.ShouldBe(1);
         list.items[0].id.ShouldBe("aabbccdd-0000-4000-8000-000000000090");
+    }
+
+    [Test]
+    public async Task Two_identical_files_uploaded_simultaneously_converge_to_one_ledger()
+    {
+        // Challenge 8: the same file sent twice at the same time must end with an
+        // identical total and coherent reports on both sides — never double-counted.
+        var content = string.Join('\n', Enumerable.Range(1, 2000).Select(i => ValidLine(i)));
+
+        var responses = await Task.WhenAll(
+            Task.Run(() => Client.PostAsync(Endpoint, Upload(content, "same.txt"))),
+            Task.Run(() => Client.PostAsync(Endpoint, Upload(content, "same.txt"))));
+
+        var ids = new List<Guid>();
+        foreach (var response in responses)
+        {
+            response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+            var dto = await response.Content.ReadFromJsonAsync<ImportDto>();
+            ids.Add(dto!.id);
+        }
+
+        var batches = new[] { await WaitAsync(ids[0]), await WaitAsync(ids[1]) };
+        foreach (var done in batches)
+        {
+            done.status.ShouldBe("COMPLETED");
+            done.totalLines.ShouldBe(2000);
+            done.errorCount.ShouldBe(0);
+            // Every line is accounted for: written by exactly one of the two batches,
+            // skipped as duplicate by the other.
+            (done.insertedCount + done.duplicateCount).ShouldBe(2000);
+        }
+
+        (batches[0].insertedCount + batches[1].insertedCount).ShouldBe(2000);
+
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        var rows = await db.Transactions
+            .CountAsync(t => t.ImportId == ids[0] || t.ImportId == ids[1]);
+        rows.ShouldBe(2000);
+    }
+
+    [Test]
+    public async Task Interrupted_import_resumes_at_saved_offset_without_rereading_the_file()
+    {
+        // Challenge 12: simulate the exact state left by a server killed mid-import —
+        // the batch row is RUNNING with a durable byte offset, and the lines before that
+        // offset are already in the ledger. The resume must process only the tail.
+        const int total = 40;
+        const int alreadyDone = 25;
+
+        var lines = Enumerable.Range(1, total).Select(i => ValidLine(i)).ToList();
+        var content = string.Join('\n', lines);
+        var processedPrefix = string.Join('\n', lines.Take(alreadyDone)) + "\n";
+        var batchId = Guid.Parse("0000000a-0000-4000-8000-0000000000aa");
+
+        using (var scope = FunctionalTestSetup.ScopeFactory.CreateScope())
+        {
+            var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var storedFileName = $"{batchId:N}.txt";
+            var folder = ImportStorage.GetFolder(config);
+            await File.WriteAllTextAsync(
+                Path.Combine(folder, storedFileName), content, new UTF8Encoding(false));
+
+            var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+            db.ImportBatches.Add(new ImportBatch
+            {
+                Id = batchId,
+                FileName = "coupure.txt",
+                StoredFileName = storedFileName,
+                FileSizeBytes = Encoding.UTF8.GetByteCount(content),
+                Format = ImportBatch.FormatTxt,
+                Status = ImportBatch.Running,
+                TotalLines = total,
+                InsertedCount = alreadyDone,
+                CreatedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                StartedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                ProcessedLines = alreadyDone,
+                BytesProcessed = Encoding.UTF8.GetByteCount(processedPrefix),
+            });
+
+            for (var i = 1; i <= alreadyDone; i++)
+            {
+                db.Transactions.Add(new Transaction
+                {
+                    Id = ValidLine(i).Split(';')[0],
+                    Type = Transaction.Credit,
+                    Amount = 1000 + i,
+                    Description = $"Vente numero {i}",
+                    CreatedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                    ImportId = batchId,
+                    SourceLine = i,
+                });
+            }
+
+            await db.SaveChangesAsync(CancellationToken.None);
+
+            // The restart: the worker picks the RUNNING batch up and resumes it.
+            var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+            await sender.Send(new ProcessImportCommand { ImportId = batchId });
+        }
+
+        var done = await WaitAsync(batchId);
+        done.status.ShouldBe("COMPLETED");
+        done.totalLines.ShouldBe(total);
+        done.processedLines.ShouldBe(total);
+        done.bytesProcessed.ShouldBe(done.fileSizeBytes);
+
+        // Proof of a true resume: no line of the head was re-read (zero duplicates),
+        // the tail was inserted, and the numbering continues where the crash stopped.
+        done.duplicateCount.ShouldBe(0);
+        done.insertedCount.ShouldBe(total);
+
+        using (var check = FunctionalTestSetup.ScopeFactory.CreateScope())
+        {
+            var db = check.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+            var rows = await db.Transactions
+                .Where(t => t.ImportId == batchId)
+                .ToListAsync();
+
+            rows.Count.ShouldBe(total);
+            rows.Min(t => t.SourceLine).ShouldBe(1);
+            rows.Max(t => t.SourceLine).ShouldBe(total);
+            // No line number is processed twice — the head was not re-read.
+            rows.Select(t => t.SourceLine).Distinct().Count().ShouldBe(total);
+            // The tail rows continue the numbering where the crash stopped: 26..40.
+            rows.Count(t => t.SourceLine > alreadyDone).ShouldBe(total - alreadyDone);
+        }
+    }
+
+    [Test]
+    public async Task Completed_import_exposes_progress_bytes_and_duration()
+    {
+        // Challenge 2 needs the real duration, challenge 6 the progress: both are part
+        // of the import report.
+        var content = string.Join('\n', ValidLine(31), ValidLine(32));
+        var response = await Client.PostAsync(Endpoint, Upload(content, "chrono.txt"));
+        var dto = await response.Content.ReadFromJsonAsync<ImportDto>();
+
+        var done = await WaitAsync(dto!.id);
+        done.status.ShouldBe("COMPLETED");
+        done.totalLines.ShouldBe(2);
+        done.progressPercent.ShouldBe(100);
+        done.processedLines.ShouldBe(done.totalLines);
+        done.bytesProcessed.ShouldBe(done.fileSizeBytes);
+        done.durationMs.HasValue.ShouldBeTrue();
+        done.durationMs!.Value.ShouldBeGreaterThanOrEqualTo(0);
     }
 
     private record Todo(IReadOnlyList<IdOnly> items);

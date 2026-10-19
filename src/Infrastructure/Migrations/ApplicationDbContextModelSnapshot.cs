@@ -30,6 +30,9 @@ namespace Mondje.Infrastructure.Migrations
                     b.Property<string>("Agency")
                         .HasColumnType("nvarchar(32)");
 
+                    b.Property<long>("BytesProcessed")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime?>("CompletedAtUtc")
                         .HasColumnType("datetime2(3)");
 
@@ -58,6 +61,9 @@ namespace Mondje.Infrastructure.Migrations
 
                     b.Property<int>("InsertedCount")
                         .HasColumnType("int");
+
+                    b.Property<long>("ProcessedLines")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("RequestId")
                         .HasColumnType("nvarchar(64)");

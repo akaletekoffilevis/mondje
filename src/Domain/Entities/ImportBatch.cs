@@ -54,6 +54,12 @@ public class ImportBatch
 
     public DateTime? CompletedAtUtc { get; set; }
 
+    /// <summary>Lines fully processed and written so far (live progress + crash resume).</summary>
+    public long ProcessedLines { get; set; }
+
+    /// <summary>File offset (bytes) after the last flushed line: the resume point.</summary>
+    public long BytesProcessed { get; set; }
+
     /// <summary>Request identifier that triggered the import, for log traceability.</summary>
     public string? RequestId { get; set; }
 }

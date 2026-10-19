@@ -49,6 +49,12 @@ public class ImportBatchConfiguration : IEntityTypeConfiguration<ImportBatch>
         builder.Property(b => b.CompletedAtUtc)
             .HasColumnType("datetime2(3)");
 
+        builder.Property(b => b.ProcessedLines)
+            .HasColumnType("bigint");
+
+        builder.Property(b => b.BytesProcessed)
+            .HasColumnType("bigint");
+
         builder.Property(b => b.RequestId)
             .HasColumnType("nvarchar(64)");
 

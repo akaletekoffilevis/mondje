@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Mondje.Application.Common.Interfaces;
@@ -10,11 +11,31 @@ using Microsoft.Extensions.Configuration;
 
 namespace Mondje.Infrastructure.Imports;
 
+/// <summary>
+/// Parses one stored import file and writes it to the ledger without ever losing or
+/// double-counting a row:
+/// - lines are decoded in strict UTF-8, so a wrongly encoded line is reported instead of
+///   silently mangled (challenge 4: "accent mal encodé");
+/// - staged rows are flushed in chunks of 50 000 and deduplicated by SQL inside the same
+///   statement that inserts them (challenges 2 and 13);
+/// - every 5 seconds the durable progress (counters + file byte offset) is saved, so a
+///   killed server resumes at that offset without re-reading the file (challenge 12) and
+///   the UI shows live progress (challenge 6, bonus 2);
+/// - the dedup insert retries on duplicate-key errors, so two identical files uploaded at
+///   the same time converge to one ledger (challenge 8).
+/// </summary>
 public class ImportEngine(IConfiguration configuration, IApplicationDbContext db) : IImportEngine
 {
     private const int ChunkSize = 50_000;
     private const int ErrorFlushSize = 1_000;
     private const int MaxRawLineLength = 1_000;
+    private const int ReadBufferSize = 128 * 1024;
+    private const int DedupMaxAttempts = 5;
+    private static readonly TimeSpan ProgressInterval = TimeSpan.FromSeconds(5);
+
+    // Strict UTF-8 with throw-on-error so a bad byte becomes a reported line (challenge 4).
+    private static readonly Encoding Utf8Strict =
+        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     private string ConnectionString =>
         configuration.GetConnectionString("MondjeDb")
@@ -26,104 +47,179 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
             .FirstOrDefaultAsync(b => b.Id == importId, cancellationToken)
             ?? throw new InvalidOperationException($"Import batch {importId} not found.");
 
-        // Resume support: reset any leftover state from a previous (crashed) run.
-        var oldErrors = await db.ImportErrorLines
-            .Where(e => e.ImportId == importId)
-            .ToListAsync(cancellationToken);
-        if (oldErrors.Count > 0)
+        var fullPath = ImportStorage.GetPath(configuration, batch.StoredFileName);
+
+        // Resume (challenge 12): a batch found RUNNING with a saved offset was interrupted;
+        // restart from that offset instead of re-reading the file from the beginning.
+        var isResume = batch.Status == ImportBatch.Running && batch.BytesProcessed > 0;
+
+        if (isResume)
         {
-            db.ImportErrorLines.RemoveRange(oldErrors);
+            batch.Status = ImportBatch.Running;
+            batch.FailureReason = null;
+        }
+        else
+        {
+            var leftoverErrors = await db.ImportErrorLines
+                .Where(e => e.ImportId == importId)
+                .ToListAsync(cancellationToken);
+            if (leftoverErrors.Count > 0)
+            {
+                db.ImportErrorLines.RemoveRange(leftoverErrors);
+            }
+
+            batch.Status = ImportBatch.Running;
+            batch.StartedAtUtc = Truncate(DateTime.UtcNow);
+            batch.TotalLines = await CountLinesAsync(fullPath, cancellationToken);
+            batch.ProcessedLines = 0;
+            batch.BytesProcessed = 0;
+            batch.InsertedCount = 0;
+            batch.DuplicateCount = 0;
+            batch.ErrorCount = 0;
+            batch.FailureReason = null;
         }
 
-        batch.Status = ImportBatch.Running;
-        batch.StartedAtUtc = Truncate(DateTime.UtcNow);
-        batch.TotalLines = 0;
-        batch.InsertedCount = 0;
-        batch.DuplicateCount = 0;
-        batch.ErrorCount = 0;
-        batch.FailureReason = null;
         await db.SaveChangesAsync(cancellationToken);
 
-        // Use a fixed UTC timestamp for this batch so all rows share one value.
-        var createdAtUtc = Truncate(DateTime.UtcNow);
+        // Every row of the batch shares the timestamp of the start of the run.
+        var createdAtUtc = Truncate(batch.StartedAtUtc ?? DateTime.UtcNow);
+        long fileOffset = batch.BytesProcessed;
 
         try
         {
-            await using var connection = new SqlConnection(ConnectionString);
-            await connection.OpenAsync(cancellationToken);
-
-            await CreateStagingTableAsync(connection, cancellationToken);
-
-            int totalLines = 0;
-            int stagedCount = 0;
-            int errorCount = 0;
-            var errors = new List<ImportErrorLine>();
-            bool isNdjson = batch.Format == ImportBatch.FormatNdjson;
-
-            // Read the file from disk (kept there for resume after a crash).
-            var fullPath = ImportStorage.GetPath(configuration, batch.StoredFileName);
-            using var reader = new StreamReader(fullPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-
-            // NDJSON: refuse a single JSON array up front.
-            if (isNdjson)
+            var isNdjson = batch.Format == ImportBatch.FormatNdjson;
+            if (isNdjson && await StartsWithJsonArrayAsync(fullPath, cancellationToken))
             {
-                var firstNonEmpty = await PeekFirstNonEmptyAsync(reader);
-                if (firstNonEmpty is not null && firstNonEmpty.TrimStart().StartsWith('['))
-                {
-                    throw new InvalidOperationException(
-                        "Un fichier NDJSON ne doit pas contenir de tableau JSON : chaque ligne doit être un objet JSON indépendant.");
-                }
+                throw new InvalidOperationException(
+                    "Un fichier NDJSON ne doit pas contenir de tableau JSON : chaque ligne doit être un objet JSON indépendant.");
             }
 
-            // Re-open for sequential reading (PeekFirstNonEmpty consumed nothing because StreamReader tracks position).
-            // StreamReader above already advanced; instead we re-create the reader.
-            reader.Dispose();
-            using var reader2 = new StreamReader(fullPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync(cancellationToken);
+            await CreateStagingTableAsync(connection, cancellationToken);
 
-            string? line;
+            var insertedTotal = batch.InsertedCount;
+            var duplicateTotal = batch.DuplicateCount;
+            var errorTotal = batch.ErrorCount;
+            var lineNumber = batch.ProcessedLines;
+            var cancelled = false;
+
             var staged = new List<StagingRow>(ChunkSize);
+            var errors = new List<ImportErrorLine>();
 
-            while ((line = await reader2.ReadLineAsync(cancellationToken)) is not null)
+            await using (var file = OpenFile(fullPath))
             {
-                totalLines++;
-
-                // Cancellation check (worker sets Status = Cancelled in the DB).
-                if (await IsCancelledAsync(importId, cancellationToken))
+                if (fileOffset > 0)
                 {
-                    break;
-                }
-
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    continue;
-                }
-
-                if (isNdjson)
-                {
-                    ParseNdjsonLine(line, batch, importId, createdAtUtc, totalLines, staged, errors, ref stagedCount, ref errorCount);
+                    // Challenge 12: resume at the exact byte where the last flushed line
+                    // ended — the file is never re-read from the beginning.
+                    file.Seek(fileOffset, SeekOrigin.Begin);
                 }
                 else
                 {
-                    ParseTxtLine(line, batch, importId, createdAtUtc, totalLines, staged, errors, ref stagedCount, ref errorCount);
+                    fileOffset = await SkipBomAsync(file, cancellationToken);
                 }
 
-                if (staged.Count >= ChunkSize)
+                var carry = new MemoryStream(1_024);
+                var buffer = new byte[ReadBufferSize];
+                var lastTick = Stopwatch.GetTimestamp();
+                int read;
+
+                while ((read = await file.ReadAsync(buffer, cancellationToken)) > 0)
                 {
-                    await BulkCopyAsync(connection, staged, cancellationToken);
-                    staged.Clear();
+                    fileOffset += read;
+                    var start = 0;
+
+                    for (var i = 0; i < read; i++)
+                    {
+                        if (buffer[i] != (byte)'\n')
+                        {
+                            continue;
+                        }
+
+                        lineNumber++;
+                        ProcessLine(
+                            JoinLine(carry, buffer, start, i - start),
+                            isNdjson, batch, importId, createdAtUtc, lineNumber,
+                            staged, errors, ref errorTotal);
+                        carry.SetLength(0);
+                        start = i + 1;
+                    }
+
+                    if (start < read)
+                    {
+                        carry.Write(buffer, start, read - start);
+                    }
+
+                    if (staged.Count >= ChunkSize)
+                    {
+                        var (inserted, duplicates) = await FlushStagedAsync(connection, staged, cancellationToken);
+                        insertedTotal += inserted;
+                        duplicateTotal += duplicates;
+                    }
+
+                    if (errors.Count >= ErrorFlushSize)
+                    {
+                        await FlushErrorsAsync(errors, cancellationToken);
+                        errors.Clear();
+                    }
+
+                    if (Stopwatch.GetElapsedTime(lastTick) >= ProgressInterval)
+                    {
+                        lastTick = Stopwatch.GetTimestamp();
+
+                        if (staged.Count > 0)
+                        {
+                            var (inserted, duplicates) = await FlushStagedAsync(connection, staged, cancellationToken);
+                            insertedTotal += inserted;
+                            duplicateTotal += duplicates;
+                        }
+
+                        if (errors.Count > 0)
+                        {
+                            await FlushErrorsAsync(errors, cancellationToken);
+                            errors.Clear();
+                        }
+
+                        var status = await db.ImportBatches
+                            .AsNoTracking()
+                            .Where(b => b.Id == importId)
+                            .Select(b => b.Status)
+                            .FirstOrDefaultAsync(cancellationToken);
+
+                        if (status == ImportBatch.Cancelled)
+                        {
+                            cancelled = true;
+                            break;
+                        }
+
+                        // Durable progress: the first byte of the partial line is the safest
+                        // resume point, every line before it is already in the ledger.
+                        batch.ProcessedLines = lineNumber;
+                        batch.BytesProcessed = fileOffset - carry.Length;
+                        batch.InsertedCount = insertedTotal;
+                        batch.DuplicateCount = duplicateTotal;
+                        batch.ErrorCount = errorTotal;
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
                 }
 
-                if (errors.Count >= ErrorFlushSize)
+                // Last line when the file has no trailing newline.
+                if (carry.Length > 0 && !cancelled)
                 {
-                    await FlushErrorsAsync(errors, cancellationToken);
-                    errors.Clear();
+                    lineNumber++;
+                    ProcessLine(
+                        carry.GetBuffer().AsSpan(0, (int)carry.Length),
+                        isNdjson, batch, importId, createdAtUtc, lineNumber,
+                        staged, errors, ref errorTotal);
                 }
             }
 
-            if (staged.Count > 0)
+            if (!cancelled && staged.Count > 0)
             {
-                await BulkCopyAsync(connection, staged, cancellationToken);
-                staged.Clear();
+                var (inserted, duplicates) = await FlushStagedAsync(connection, staged, cancellationToken);
+                insertedTotal += inserted;
+                duplicateTotal += duplicates;
             }
 
             if (errors.Count > 0)
@@ -132,142 +228,112 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
                 errors.Clear();
             }
 
-            // Deduplicate within the file and against the existing ledger, then insert.
-            int insertedCount;
-            using (var cmd = connection.CreateCommand())
-            {
-                cmd.CommandText = @"
-WITH ranked AS (
-    SELECT Id, Type, Amount, Description, Agency, ImportId, SourceLine, CreatedAtUtc,
-           ROW_NUMBER() OVER (PARTITION BY Id ORDER BY SourceLine) AS rn
-    FROM #Staging
-)
-INSERT INTO Transactions (Id, Type, Amount, Description, CreatedAtUtc, Agency, ImportId, SourceLine)
-SELECT r.Id, r.Type, r.Amount, r.Description, r.CreatedAtUtc, r.Agency, r.ImportId, r.SourceLine
-FROM ranked r
-WHERE r.rn = 1
-  AND NOT EXISTS (SELECT 1 FROM Transactions t WHERE t.Id = r.Id);";
-                insertedCount = await cmd.ExecuteNonQueryAsync(cancellationToken);
-            }
-
-            var duplicateCount = stagedCount - insertedCount;
-
             await DropStagingTableAsync(connection, cancellationToken);
 
-            // Reload the batch (it may have been cancelled concurrently).
-            var fresh = await db.ImportBatches.FirstAsync(b => b.Id == importId, cancellationToken);
-            if (fresh.Status == ImportBatch.Cancelled)
+            // Read the live status: a cancellation may have been made concurrently from
+            // another context (the tracked instance would still say RUNNING).
+            var liveStatus = await db.ImportBatches
+                .AsNoTracking()
+                .Where(b => b.Id == importId)
+                .Select(b => b.Status)
+                .FirstOrDefaultAsync(CancellationToken.None);
+
+            batch.ProcessedLines = lineNumber;
+            batch.BytesProcessed = fileOffset;
+            batch.InsertedCount = insertedTotal;
+            batch.DuplicateCount = duplicateTotal;
+            batch.ErrorCount = errorTotal;
+
+            if (liveStatus == ImportBatch.Cancelled)
             {
-                // Cancellation already handled by the cancel endpoint; just leave counters.
-                fresh.CompletedAtUtc = fresh.CompletedAtUtc ?? Truncate(DateTime.UtcNow);
+                // The cancel endpoint deleted the rows it found; delete any straggler this
+                // engine inserted after that moment. Manually edited rows are kept (challenge 9).
+                batch.Status = ImportBatch.Cancelled;
+                await db.Transactions
+                    .Where(t => t.ImportId == importId && t.EditedAtUtc == null)
+                    .ExecuteDeleteAsync(cancellationToken);
+
+                batch.CompletedAtUtc ??= Truncate(DateTime.UtcNow);
             }
             else
             {
-                fresh.Status = ImportBatch.Completed;
-                fresh.TotalLines = totalLines;
-                fresh.InsertedCount = insertedCount;
-                fresh.DuplicateCount = duplicateCount;
-                fresh.ErrorCount = errorCount;
-                fresh.CompletedAtUtc = Truncate(DateTime.UtcNow);
+                batch.Status = ImportBatch.Completed;
+                if (lineNumber > batch.TotalLines)
+                {
+                    batch.TotalLines = (int)lineNumber;
+                }
+
+                batch.CompletedAtUtc = Truncate(DateTime.UtcNow);
             }
 
             await db.SaveChangesAsync(cancellationToken);
         }
         catch (Exception ex)
         {
-            var fresh = await db.ImportBatches.FirstOrDefaultAsync(b => b.Id == importId, cancellationToken);
-            if (fresh is not null)
+            // A cancellation wins over the failure caused by the interruption.
+            var liveStatus = await db.ImportBatches
+                .AsNoTracking()
+                .Where(b => b.Id == importId)
+                .Select(b => b.Status)
+                .FirstOrDefaultAsync(CancellationToken.None);
+
+            if (liveStatus != ImportBatch.Cancelled)
             {
-                fresh.Status = ImportBatch.Failed;
-                fresh.FailureReason = ex.Message;
-                fresh.CompletedAtUtc = Truncate(DateTime.UtcNow);
-                await db.SaveChangesAsync(cancellationToken);
+                batch.Status = ImportBatch.Failed;
+                batch.FailureReason = ex.Message.Length > 512 ? ex.Message[..512] : ex.Message;
+                batch.CompletedAtUtc = Truncate(DateTime.UtcNow);
+                await db.SaveChangesAsync(CancellationToken.None);
             }
 
             throw;
         }
     }
 
-    private async Task CreateStagingTableAsync(SqlConnection connection, CancellationToken ct)
+    private static void ProcessLine(
+        ReadOnlySpan<byte> lineBytes,
+        bool isNdjson,
+        ImportBatch batch,
+        Guid importId,
+        DateTime createdAtUtc,
+        long lineNumber,
+        List<StagingRow> staged,
+        List<ImportErrorLine> errors,
+        ref int errorTotal)
     {
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = @"
-IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;
-CREATE TABLE #Staging (
-    Id char(36) NOT NULL,
-    Type varchar(6) NOT NULL,
-    Amount bigint NOT NULL,
-    Description nvarchar(255) NOT NULL,
-    Agency nvarchar(32) NULL,
-    ImportId uniqueidentifier NOT NULL,
-    SourceLine int NOT NULL,
-    CreatedAtUtc datetime2(3) NOT NULL
-);";
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
-    private async Task DropStagingTableAsync(SqlConnection connection, CancellationToken ct)
-    {
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = "IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;";
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
-    private static async Task BulkCopyAsync(SqlConnection connection, List<StagingRow> rows, CancellationToken ct)
-    {
-        using var bulk = new SqlBulkCopy(connection)
+        // CRLF files: drop the carriage return kept by the '\n' split.
+        if (lineBytes.Length > 0 && lineBytes[^1] == (byte)'\r')
         {
-            DestinationTableName = "#Staging",
-            BatchSize = rows.Count,
-            BulkCopyTimeout = 300,
-        };
-        var table = new DataTable();
-        table.Columns.Add("Id", typeof(string));
-        table.Columns.Add("Type", typeof(string));
-        table.Columns.Add("Amount", typeof(long));
-        table.Columns.Add("Description", typeof(string));
-        table.Columns.Add("Agency", typeof(string));
-        table.Columns.Add("ImportId", typeof(Guid));
-        table.Columns.Add("SourceLine", typeof(int));
-        table.Columns.Add("CreatedAtUtc", typeof(DateTime));
-
-        foreach (var r in rows)
-        {
-            table.Rows.Add(r.Id, r.Type, r.Amount, r.Description, (object?)r.Agency ?? DBNull.Value, r.ImportId, r.SourceLine, r.CreatedAtUtc);
+            lineBytes = lineBytes[..^1];
         }
 
-        await bulk.WriteToServerAsync(table, ct);
-    }
-
-    private async Task FlushErrorsAsync(List<ImportErrorLine> errors, CancellationToken ct)
-    {
-        db.ImportErrorLines.AddRange(errors);
-        await db.SaveChangesAsync(ct);
-    }
-
-    private async Task<bool> IsCancelledAsync(Guid importId, CancellationToken ct)
-    {
-        var status = await db.ImportBatches
-            .AsNoTracking()
-            .Where(b => b.Id == importId)
-            .Select(b => b.Status)
-            .FirstOrDefaultAsync(ct);
-        return status == ImportBatch.Cancelled;
-    }
-
-    private static async Task<string?> PeekFirstNonEmptyAsync(StreamReader reader)
-    {
-        // Read lines until a non-empty one is found; we cannot "unread", so this helper
-        // is only used to decide the format before re-opening the file.
         string? line;
-        while ((line = await reader.ReadLineAsync()) is not null)
+        try
         {
-            if (!string.IsNullOrWhiteSpace(line))
-            {
-                return line;
-            }
+            line = Utf8Strict.GetString(lineBytes);
         }
-        return null;
+        catch (DecoderFallbackException)
+        {
+            // Challenge 4 lists "accent mal encodé" among the broken lines: report it with
+            // a readable latin1 rendering so the user can still see the original content.
+            AddError(errors, ref errorTotal, importId, (int)lineNumber, ImportErrorLine.KindFormat,
+                "Encodage invalide : la ligne n'est pas en UTF-8 valide (accent mal encodé ou octets corrompus).",
+                Encoding.Latin1.GetString(lineBytes));
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return;
+        }
+
+        if (isNdjson)
+        {
+            ParseNdjsonLine(line, batch, importId, createdAtUtc, (int)lineNumber, staged, errors, ref errorTotal);
+        }
+        else
+        {
+            ParseTxtLine(line, batch, importId, createdAtUtc, (int)lineNumber, staged, errors, ref errorTotal);
+        }
     }
 
     private static void ParseTxtLine(
@@ -278,7 +344,6 @@ CREATE TABLE #Staging (
         int lineNumber,
         List<StagingRow> staged,
         List<ImportErrorLine> errors,
-        ref int stagedCount,
         ref int errorCount)
     {
         var fields = line.Split(';', 4);
@@ -323,7 +388,7 @@ CREATE TABLE #Staging (
         }
 
         staged.Add(new StagingRow(
-            idRaw.Trim().ToLowerInvariant(),
+            idRaw.ToLowerInvariant(),
             type,
             amount,
             description,
@@ -331,7 +396,6 @@ CREATE TABLE #Staging (
             importId,
             lineNumber,
             createdAtUtc));
-        stagedCount++;
     }
 
     private static void ParseNdjsonLine(
@@ -342,7 +406,6 @@ CREATE TABLE #Staging (
         int lineNumber,
         List<StagingRow> staged,
         List<ImportErrorLine> errors,
-        ref int stagedCount,
         ref int errorCount)
     {
         JsonDocument doc;
@@ -379,9 +442,8 @@ CREATE TABLE #Staging (
                 type = typeEl.GetString()?.Trim().ToUpperInvariant();
             }
 
-            string? amountRaw = null;
             long amount = 0;
-            bool amountOk = false;
+            var amountOk = false;
             if (root.TryGetProperty("montant", out var montantEl) || root.TryGetProperty("amount", out montantEl))
             {
                 if (montantEl.ValueKind == JsonValueKind.Number && montantEl.TryGetInt64(out amount) && amount > 0)
@@ -390,8 +452,7 @@ CREATE TABLE #Staging (
                 }
                 else if (montantEl.ValueKind == JsonValueKind.String)
                 {
-                    amountRaw = montantEl.GetString();
-                    amountOk = TryParseAmount(amountRaw ?? string.Empty, out amount);
+                    amountOk = TryParseAmount(montantEl.GetString() ?? string.Empty, out amount);
                 }
             }
 
@@ -438,7 +499,6 @@ CREATE TABLE #Staging (
                 importId,
                 lineNumber,
                 createdAtUtc));
-            stagedCount++;
         }
     }
 
@@ -448,6 +508,196 @@ CREATE TABLE #Staging (
         if (string.IsNullOrEmpty(raw) || !raw.All(char.IsAsciiDigit)) return false;
         if (!long.TryParse(raw, out amount)) return false;
         return amount > 0;
+    }
+
+    /// <summary>
+    /// Copies the staged chunk into the staging table, then deduplicates and inserts it in
+    /// one statement. Retries on duplicate-key/deadlock: the failed statement rolled back
+    /// as a whole, so the next attempt simply sees the winner's rows as duplicates.
+    /// </summary>
+    private async Task<(int Inserted, int Duplicates)> FlushStagedAsync(
+        SqlConnection connection, List<StagingRow> rows, CancellationToken cancellationToken)
+    {
+        await BulkCopyAsync(connection, rows, cancellationToken);
+        var inserted = await DedupInsertAsync(connection, cancellationToken);
+
+        using (var clear = connection.CreateCommand())
+        {
+            clear.CommandText = "DELETE FROM #Staging;";
+            await clear.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        return (inserted, rows.Count - inserted);
+    }
+
+    private static async Task<int> DedupInsertAsync(SqlConnection connection, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = @"
+WITH ranked AS (
+    SELECT Id, Type, Amount, Description, Agency, ImportId, SourceLine, CreatedAtUtc,
+           ROW_NUMBER() OVER (PARTITION BY Id ORDER BY SourceLine) AS rn
+    FROM #Staging
+)
+INSERT INTO Transactions (Id, Type, Amount, Description, CreatedAtUtc, Agency, ImportId, SourceLine)
+SELECT r.Id, r.Type, r.Amount, r.Description, r.CreatedAtUtc, r.Agency, r.ImportId, r.SourceLine
+FROM ranked r
+WHERE r.rn = 1
+  AND NOT EXISTS (SELECT 1 FROM Transactions t WHERE t.Id = r.Id);";
+
+            try
+            {
+                return await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (SqlException ex) when ((ex.Number is 2601 or 2627 or 1205) && attempt < DedupMaxAttempts)
+            {
+                // 2601/2627: another import inserted the same UUIDs first (challenge 8).
+                // 1205: deadlock between two concurrent bulk inserts.
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), cancellationToken);
+            }
+        }
+    }
+
+    private static async Task CreateStagingTableAsync(SqlConnection connection, CancellationToken ct)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = @"
+IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;
+CREATE TABLE #Staging (
+    Id char(36) NOT NULL,
+    Type varchar(6) NOT NULL,
+    Amount bigint NOT NULL,
+    Description nvarchar(255) NOT NULL,
+    Agency nvarchar(32) NULL,
+    ImportId uniqueidentifier NOT NULL,
+    SourceLine int NOT NULL,
+    CreatedAtUtc datetime2(3) NOT NULL
+);";
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task DropStagingTableAsync(SqlConnection connection, CancellationToken ct)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;";
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task BulkCopyAsync(SqlConnection connection, List<StagingRow> rows, CancellationToken ct)
+    {
+        using var bulk = new SqlBulkCopy(connection)
+        {
+            DestinationTableName = "#Staging",
+            BatchSize = rows.Count,
+            BulkCopyTimeout = 300,
+        };
+        var table = new DataTable();
+        table.Columns.Add("Id", typeof(string));
+        table.Columns.Add("Type", typeof(string));
+        table.Columns.Add("Amount", typeof(long));
+        table.Columns.Add("Description", typeof(string));
+        table.Columns.Add("Agency", typeof(string));
+        table.Columns.Add("ImportId", typeof(Guid));
+        table.Columns.Add("SourceLine", typeof(int));
+        table.Columns.Add("CreatedAtUtc", typeof(DateTime));
+
+        foreach (var r in rows)
+        {
+            table.Rows.Add(r.Id, r.Type, r.Amount, r.Description, (object?)r.Agency ?? DBNull.Value, r.ImportId, r.SourceLine, r.CreatedAtUtc);
+        }
+
+        await bulk.WriteToServerAsync(table, ct);
+    }
+
+    private async Task FlushErrorsAsync(List<ImportErrorLine> errors, CancellationToken ct)
+    {
+        db.ImportErrorLines.AddRange(errors);
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static FileStream OpenFile(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.Read, ReadBufferSize,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+    /// <summary>Counts lines exactly like the parser: one per '\n', plus a final partial line.</summary>
+    private static async Task<int> CountLinesAsync(string path, CancellationToken ct)
+    {
+        await using var file = OpenFile(path);
+        var buffer = new byte[ReadBufferSize];
+        long newlines = 0;
+        var lastByte = -1;
+        int read;
+
+        while ((read = await file.ReadAsync(buffer, ct)) > 0)
+        {
+            lastByte = buffer[read - 1];
+            for (var i = 0; i < read; i++)
+            {
+                if (buffer[i] == (byte)'\n')
+                {
+                    newlines++;
+                }
+            }
+        }
+
+        if (newlines == 0)
+        {
+            return lastByte < 0 ? 0 : 1;
+        }
+
+        return (int)(lastByte == '\n' ? newlines : newlines + 1);
+    }
+
+    private static async Task<long> SkipBomAsync(FileStream file, CancellationToken ct)
+    {
+        var head = new byte[3];
+        var read = await file.ReadAsync(head, ct);
+        if (read == 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF)
+        {
+            return 3; // the BOM is part of the file: keep the offset aligned with its bytes
+        }
+
+        file.Seek(0, SeekOrigin.Begin);
+        return 0;
+    }
+
+    private static async Task<bool> StartsWithJsonArrayAsync(string path, CancellationToken ct)
+    {
+        await using var file = OpenFile(path);
+        var buffer = new byte[4_096];
+        var read = await file.ReadAsync(buffer, ct);
+        var span = buffer.AsSpan(0, read);
+
+        if (span.Length >= 3 && span[0] == 0xEF && span[1] == 0xBB && span[2] == 0xBF)
+        {
+            span = span[3..];
+        }
+
+        foreach (var b in span)
+        {
+            if (b is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')
+            {
+                continue;
+            }
+
+            return b == (byte)'[';
+        }
+
+        return false;
+    }
+
+    /// <summary>Full line bytes = bytes carried over from the previous read + this segment.</summary>
+    private static ReadOnlySpan<byte> JoinLine(MemoryStream carry, byte[] buffer, int start, int length)
+    {
+        if (carry.Length == 0)
+        {
+            return buffer.AsSpan(start, length);
+        }
+
+        carry.Write(buffer, start, length);
+        return carry.GetBuffer().AsSpan(0, (int)carry.Length);
     }
 
     private static void AddError(

@@ -14,4 +14,8 @@ public record ImportDto(
     string? failureReason,
     DateTime createdAtUtc,
     DateTime? startedAtUtc,
-    DateTime? completedAtUtc);
+    DateTime? completedAtUtc,
+    long processedLines,
+    long bytesProcessed,
+    int progressPercent,
+    long? durationMs);
