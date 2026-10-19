@@ -23,14 +23,9 @@ public class TransactionTokenConfiguration : IEntityTypeConfiguration<Transactio
         builder.Property(k => k.TransactionId)
             .HasColumnType("char(36)");
 
-        // Editing or hard-deleting a transaction (cancellation) looks its tokens up by
-        // transaction; without this index every cascade would scan the whole word index.
-        builder.HasIndex(k => k.TransactionId)
-            .HasDatabaseName("IX_TransactionTokens_TransactionId");
-
-        builder.HasOne<Transaction>()
-            .WithMany()
-            .HasForeignKey(k => k.TransactionId)
-            .OnDelete(DeleteBehavior.Cascade);
+        // Deliberately no foreign key and no index on TransactionId: maintaining them
+        // made a 1M-line import write hundreds of thousands of random index entries. The
+        // words are removed by set-based statements instead (cancellation, edition), and
+        // the word table stays a single clustered index that is written in key order.
     }
 }

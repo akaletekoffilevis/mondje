@@ -33,6 +33,10 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
     private const int MaxRawLineLength = 1_000;
     private const int ReadBufferSize = 128 * 1024;
     private const int DedupMaxAttempts = 5;
+
+    // A chunk of 20 000 lines writes ~120 000 search words; on a small machine that can
+    // exceed the 30 second default of a SQL command, which must never fail an import.
+    private const int WriteCommandTimeoutSeconds = 900;
     private static readonly TimeSpan ProgressInterval = TimeSpan.FromSeconds(5);
 
     // Strict UTF-8 with throw-on-error so a bad byte becomes a reported line (challenge 4).
@@ -533,23 +537,31 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
     private async Task<(int Inserted, int Duplicates)> FlushStagedAsync(
         SqlConnection connection, List<StagingRow> rows, CancellationToken cancellationToken)
     {
+        var sw = Stopwatch.StartNew();
         await BulkCopyAsync(connection, rows, cancellationToken);
-        await BulkCopyTokensAsync(connection, rows, cancellationToken);
+        var bulkMs = sw.ElapsedMilliseconds;
 
         for (var attempt = 1; ; attempt++)
         {
             try
             {
                 await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-                var inserted = await DedupInsertAsync(connection, (SqlTransaction)transaction, cancellationToken);
-                await InsertTokensAsync(connection, (SqlTransaction)transaction, cancellationToken);
+                var insertedIds = await DedupInsertAsync(connection, (SqlTransaction)transaction, cancellationToken);
+                var dedupMs = sw.ElapsedMilliseconds - bulkMs;
+                await BulkCopyTokensAsync(connection, (SqlTransaction)transaction, rows, insertedIds, cancellationToken);
+                var tokensMs = sw.ElapsedMilliseconds - bulkMs - dedupMs;
                 await transaction.CommitAsync(cancellationToken);
 
                 using (var clear = connection.CreateCommand())
                 {
-                    clear.CommandText = "DELETE FROM #Staging; DELETE FROM #StagingTokens;";
+                    clear.CommandText = "DELETE FROM #Staging;";
                     await clear.ExecuteNonQueryAsync(cancellationToken);
                 }
+
+                var inserted = insertedIds.Count;
+                Console.WriteLine(
+                    $"[import-chunk] rows={rows.Count} inserted={inserted} bulkMs={bulkMs} " +
+                    $"dedupMs={dedupMs} tokensMs={tokensMs} totalMs={sw.ElapsedMilliseconds}");
 
                 var duplicates = rows.Count - inserted;
                 rows.Clear(); // the chunk is written: the next one starts from an empty list
@@ -565,46 +577,89 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
         }
     }
 
-    private static async Task<int> DedupInsertAsync(
+    /// <summary>
+    /// Inserts the chunk's rows, deduplicated by UUID inside the same statement. The rows
+    /// are written in Id order with TABLOCK so the clustered index is filled sequentially
+    /// (a random order would split a page on nearly every row). Returns the ids that were
+    /// actually written: the caller uses them to index only the words that belong to the
+    /// ledger, which keeps the foreign key satisfied and avoids duplicate search words.
+    /// </summary>
+    private static async Task<HashSet<string>> DedupInsertAsync(
         SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
     {
         using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
+        cmd.CommandTimeout = WriteCommandTimeoutSeconds;
         cmd.CommandText = @"
 WITH ranked AS (
     SELECT Id, Type, Amount, Description, Agency, ImportId, SourceLine, CreatedAtUtc,
            ROW_NUMBER() OVER (PARTITION BY Id ORDER BY SourceLine) AS rn
     FROM #Staging
 )
-INSERT INTO Transactions (Id, Type, Amount, Description, CreatedAtUtc, Agency, ImportId, SourceLine)
+INSERT INTO Transactions WITH (TABLOCK) (Id, Type, Amount, Description, CreatedAtUtc, Agency, ImportId, SourceLine)
+OUTPUT INSERTED.Id
 SELECT r.Id, r.Type, r.Amount, r.Description, r.CreatedAtUtc, r.Agency, r.ImportId, r.SourceLine
 FROM ranked r
 WHERE r.rn = 1
-  AND NOT EXISTS (SELECT 1 FROM Transactions t WHERE t.Id = r.Id);";
+  AND NOT EXISTS (SELECT 1 FROM Transactions t WHERE t.Id = r.Id)
+ORDER BY r.Id;";
 
-        return await cmd.ExecuteNonQueryAsync(cancellationToken);
+        var ids = new HashSet<string>();
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            ids.Add(reader.GetString(0));
+        }
+
+        return ids;
     }
 
     /// <summary>
-    /// Adds the words of this chunk to the search index. Rows skipped as duplicates
-    /// already have their words, hence the NOT EXISTS; the EXISTS keeps the foreign key
-    /// satisfied if a cancellation deleted the batch's rows concurrently.
+    /// Writes the chunk's search words straight into the word table, in Token order and
+    /// under a table lock: the clustered index is filled sequentially and, in the simple
+    /// recovery model, the bulk insert is minimally logged. Only the rows the dedup insert
+    /// actually wrote are staged, so no word is indexed twice.
     /// </summary>
-    private static async Task InsertTokensAsync(
-        SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+    private static async Task BulkCopyTokensAsync(
+        SqlConnection connection, SqlTransaction transaction, List<StagingRow> rows, HashSet<string> insertedIds, CancellationToken ct)
     {
-        using var cmd = connection.CreateCommand();
-        cmd.Transaction = transaction;
-        cmd.CommandText = @"
-INSERT INTO TransactionTokens (Token, CreatedAtUtc, TransactionId)
-SELECT DISTINCT s.Token, s.CreatedAtUtc, s.TransactionId
-FROM #StagingTokens s
-WHERE EXISTS (SELECT 1 FROM Transactions t WHERE t.Id = s.TransactionId)
-  AND NOT EXISTS (
-      SELECT 1 FROM TransactionTokens k
-      WHERE k.Token = s.Token AND k.CreatedAtUtc = s.CreatedAtUtc AND k.TransactionId = s.TransactionId);";
+        var tokens = new List<(string Token, DateTime CreatedAtUtc, string TransactionId)>();
+        foreach (var r in rows)
+        {
+            if (!insertedIds.Contains(r.Id))
+            {
+                continue;
+            }
 
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+            foreach (var token in SearchTokens.FromDescription(r.Description))
+            {
+                tokens.Add((token, r.CreatedAtUtc, r.Id));
+            }
+        }
+
+        if (tokens.Count == 0)
+        {
+            return;
+        }
+
+        tokens.Sort((a, b) => string.CompareOrdinal(a.Token, b.Token));
+
+        var table = new DataTable();
+        table.Columns.Add("Token", typeof(string));
+        table.Columns.Add("CreatedAtUtc", typeof(DateTime));
+        table.Columns.Add("TransactionId", typeof(string));
+        foreach (var (token, createdAtUtc, transactionId) in tokens)
+        {
+            table.Rows.Add(token, createdAtUtc, transactionId);
+        }
+
+        using var bulk = new SqlBulkCopy(connection, SqlBulkCopyOptions.TableLock, transaction)
+        {
+            DestinationTableName = "TransactionTokens",
+            BatchSize = table.Rows.Count,
+            BulkCopyTimeout = 300,
+        };
+        await bulk.WriteToServerAsync(table, ct);
     }
 
     private static async Task CreateStagingTableAsync(SqlConnection connection, CancellationToken ct)
@@ -612,7 +667,6 @@ WHERE EXISTS (SELECT 1 FROM Transactions t WHERE t.Id = s.TransactionId)
         using var cmd = connection.CreateCommand();
         cmd.CommandText = @"
 IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;
-IF OBJECT_ID('tempdb..#StagingTokens') IS NOT NULL DROP TABLE #StagingTokens;
 CREATE TABLE #Staging (
     Id char(36) NOT NULL,
     Type varchar(6) NOT NULL,
@@ -622,11 +676,6 @@ CREATE TABLE #Staging (
     ImportId uniqueidentifier NOT NULL,
     SourceLine int NOT NULL,
     CreatedAtUtc datetime2(3) NOT NULL
-);
-CREATE TABLE #StagingTokens (
-    Token nvarchar(64) NOT NULL,
-    CreatedAtUtc datetime2(3) NOT NULL,
-    TransactionId char(36) NOT NULL
 );";
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -634,9 +683,7 @@ CREATE TABLE #StagingTokens (
     private static async Task DropStagingTableAsync(SqlConnection connection, CancellationToken ct)
     {
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = @"
-IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;
-IF OBJECT_ID('tempdb..#StagingTokens') IS NOT NULL DROP TABLE #StagingTokens;";
+        cmd.CommandText = "IF OBJECT_ID('tempdb..#Staging') IS NOT NULL DROP TABLE #Staging;";
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -663,36 +710,6 @@ IF OBJECT_ID('tempdb..#StagingTokens') IS NOT NULL DROP TABLE #StagingTokens;";
             table.Rows.Add(r.Id, r.Type, r.Amount, r.Description, (object?)r.Agency ?? DBNull.Value, r.ImportId, r.SourceLine, r.CreatedAtUtc);
         }
 
-        await bulk.WriteToServerAsync(table, ct);
-    }
-
-    /// <summary>Stages the normalised words of every valid line of the chunk.</summary>
-    private static async Task BulkCopyTokensAsync(SqlConnection connection, List<StagingRow> rows, CancellationToken ct)
-    {
-        var table = new DataTable();
-        table.Columns.Add("Token", typeof(string));
-        table.Columns.Add("CreatedAtUtc", typeof(DateTime));
-        table.Columns.Add("TransactionId", typeof(string));
-
-        foreach (var r in rows)
-        {
-            foreach (var token in SearchTokens.FromDescription(r.Description))
-            {
-                table.Rows.Add(token, r.CreatedAtUtc, r.Id);
-            }
-        }
-
-        if (table.Rows.Count == 0)
-        {
-            return;
-        }
-
-        using var bulk = new SqlBulkCopy(connection)
-        {
-            DestinationTableName = "#StagingTokens",
-            BatchSize = table.Rows.Count,
-            BulkCopyTimeout = 300,
-        };
         await bulk.WriteToServerAsync(table, ct);
     }
 

@@ -66,10 +66,6 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
         builder.HasIndex(t => t.ImportId)
             .HasDatabaseName("IX_Transactions_ImportId");
 
-        // Balance per agency (bonus challenge 5).
-        builder.HasIndex(t => t.Agency)
-            .HasDatabaseName("IX_Transactions_Agency");
-
         // Balance at a past date without recalculating the table (challenge 11): narrow
         // covering index over live rows, so SUM(CASE WHEN Type ...) is index-only.
         builder.HasIndex(t => t.CreatedAtUtc)

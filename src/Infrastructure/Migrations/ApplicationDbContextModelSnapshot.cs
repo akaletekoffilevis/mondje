@@ -176,9 +176,6 @@ namespace Mondje.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Agency")
-                        .HasDatabaseName("IX_Transactions_Agency");
-
                     b.HasIndex("CreatedAtUtc")
                         .HasDatabaseName("IX_Transactions_Balance")
                         .HasFilter("[DeletedAtUtc] IS NULL");
@@ -220,9 +217,6 @@ namespace Mondje.Infrastructure.Migrations
 
                     b.HasKey("Token", "CreatedAtUtc", "TransactionId");
 
-                    b.HasIndex("TransactionId")
-                        .HasDatabaseName("IX_TransactionTokens_TransactionId");
-
                     b.ToTable("TransactionTokens", (string)null);
                 });
 
@@ -231,15 +225,6 @@ namespace Mondje.Infrastructure.Migrations
                     b.HasOne("Mondje.Domain.Entities.ImportBatch", null)
                         .WithMany()
                         .HasForeignKey("ImportId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Mondje.Domain.Entities.TransactionToken", b =>
-                {
-                    b.HasOne("Mondje.Domain.Entities.Transaction", null)
-                        .WithMany()
-                        .HasForeignKey("TransactionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
