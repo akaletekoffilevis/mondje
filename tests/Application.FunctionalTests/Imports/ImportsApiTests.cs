@@ -365,7 +365,143 @@ public class ImportsApiTests : TestBase
         done.durationMs!.Value.ShouldBeGreaterThanOrEqualTo(0);
     }
 
+    [Test]
+    public async Task Upload_with_unknown_agency_returns_422()
+    {
+        var form = Upload(ValidLine(70), "agence.txt", agency: "Kribi");
+
+        var response = await Client.PostAsync(Endpoint, form);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        (await response.Content.ReadAsStringAsync()).ShouldContain("agence");
+    }
+
+    [Test]
+    public async Task Cancelling_a_queued_import_never_inserts_anything()
+    {
+        // The batch exists but no worker has picked it up yet: the user cancels first.
+        // Processing that batch afterwards must be a no-op, not a full import.
+        var batchId = Guid.NewGuid();
+        var content = string.Join('\n', ValidLine(50), ValidLine(51));
+
+        using (var scope = FunctionalTestSetup.ScopeFactory.CreateScope())
+        {
+            var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var storedFileName = $"{batchId:N}.txt";
+            await File.WriteAllTextAsync(
+                Path.Combine(ImportStorage.GetFolder(config), storedFileName),
+                content,
+                new UTF8Encoding(false));
+
+            var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+            db.ImportBatches.Add(new ImportBatch
+            {
+                Id = batchId,
+                FileName = "en-attente.txt",
+                StoredFileName = storedFileName,
+                FileSizeBytes = Encoding.UTF8.GetByteCount(content),
+                Format = ImportBatch.FormatTxt,
+                Status = ImportBatch.Pending,
+                TotalLines = 2,
+                CreatedAtUtc = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+
+        (await Client.DeleteAsync($"{Endpoint}/{batchId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        using (var scope = FunctionalTestSetup.ScopeFactory.CreateScope())
+        {
+            var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+            await sender.Send(new ProcessImportCommand { ImportId = batchId });
+        }
+
+        var dto = await Client.GetFromJsonAsync<ImportDto>($"{Endpoint}/{batchId}");
+        dto!.status.ShouldBe("CANCELLED");
+        dto.insertedCount.ShouldBe(0);
+
+        using (var check = FunctionalTestSetup.ScopeFactory.CreateScope())
+        {
+            var db = check.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+            (await db.Transactions.CountAsync(t => t.ImportId == batchId)).ShouldBe(0);
+        }
+    }
+
+    [Test]
+    public async Task Cancelling_an_import_keeps_the_rows_edited_by_hand()
+    {
+        // Challenge 9: surgical cancellation. The untouched imported rows disappear,
+        // the one corrected by hand stays in the ledger.
+        var uploaded = await Client.PostAsync(Endpoint,
+            Upload(string.Join('\n', ValidLine(60), ValidLine(61)), "chirurgical.txt"));
+        var dto = await uploaded.Content.ReadFromJsonAsync<ImportDto>();
+        await WaitAsync(dto!.id);
+
+        var editedId = ValidLine(60).Split(';')[0];
+        var untouchedId = ValidLine(61).Split(';')[0];
+
+        var update = await Client.PutAsync($"/api/Transactions/{editedId}",
+            new StringContent("""{"amount":9999,"description":"Corrigé à la main"}""",
+                Encoding.UTF8, "application/json"));
+        update.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        (await Client.DeleteAsync($"{Endpoint}/{dto.id}"))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        (await Client.GetAsync($"/api/Transactions/{editedId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Client.GetAsync($"/api/Transactions/{untouchedId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.NotFound);
+
+        var remaining = await Client.GetFromJsonAsync<SourcePage>("/api/Transactions?limit=100");
+        remaining!.items.Count.ShouldBe(1);
+        remaining.items[0].id.ShouldBe(editedId);
+    }
+
+    [Test]
+    public async Task Every_imported_transaction_keeps_its_source_file_and_line()
+    {
+        var content = string.Join('\n', ValidLine(80), ValidLine(81));
+        var uploaded = await Client.PostAsync(Endpoint, Upload(content, "origine.txt", agency: "Yaoundé"));
+        var dto = await uploaded.Content.ReadFromJsonAsync<ImportDto>();
+        await WaitAsync(dto!.id);
+
+        var page = await Client.GetFromJsonAsync<SourcePage>("/api/Transactions?limit=10");
+
+        page.ShouldNotBeNull();
+        page!.items.Count.ShouldBe(2);
+        page.items.ShouldAllBe(i => i.sourceFileName == "origine.txt");
+        page.items.ShouldAllBe(i => i.importId == dto.id);
+        page.items.Select(i => i.sourceLine).OrderBy(n => n).ShouldBe(new int?[] { 1, 2 });
+    }
+
+    [Test]
+    public async Task Uppercase_uuid_from_a_file_is_stored_lowercase()
+    {
+        var content = "ABCDEF00-0000-4000-8000-000000000001;CREDIT;1500;Casse haute";
+
+        var uploaded = await Client.PostAsync(Endpoint, Upload(content, "majuscules.txt"));
+        var dto = await uploaded.Content.ReadFromJsonAsync<ImportDto>();
+        var done = await WaitAsync(dto!.id);
+
+        done.insertedCount.ShouldBe(1);
+        done.errorCount.ShouldBe(0);
+
+        var response = await Client.GetAsync(
+            "/api/Transactions/abcdef00-0000-4000-8000-000000000001");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
     private record Todo(IReadOnlyList<IdOnly> items);
 
     private record IdOnly(string id);
+
+    private record SourcePage(IReadOnlyList<SourceItem> items);
+
+    private record SourceItem(
+        string id,
+        Guid? importId,
+        int? sourceLine,
+        string? sourceFileName);
 }
