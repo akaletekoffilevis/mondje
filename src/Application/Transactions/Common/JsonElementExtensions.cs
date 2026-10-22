@@ -15,15 +15,21 @@ public static class JsonElementExtensions
 
         if (element.ValueKind == JsonValueKind.Number && element.TryGetInt64(out value))
         {
-            return value > 0;
+            if (value > 0)
+            {
+                return true;
+            }
+
+            value = 0;
+            return false;
         }
 
         if (element.ValueKind == JsonValueKind.String)
         {
             var s = element.GetString();
-            if (!string.IsNullOrEmpty(s) && s.All(char.IsAsciiDigit) && long.TryParse(s, out value))
+            if (!string.IsNullOrEmpty(s) && s.All(char.IsAsciiDigit) && long.TryParse(s, out value) && value > 0)
             {
-                return value > 0;
+                return true;
             }
         }
 
