@@ -1,5 +1,10 @@
 ﻿# Mondje — grand livre de transactions
 
+[![build](https://github.com/akaletekoffilevis/mondje/actions/workflows/build.yml/badge.svg)](https://github.com/akaletekoffilevis/mondje/actions/workflows/build.yml)
+[![unit-tests](https://github.com/akaletekoffilevis/mondje/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/akaletekoffilevis/mondje/actions/workflows/unit-tests.yml)
+[![functional-tests](https://github.com/akaletekoffilevis/mondje/actions/workflows/functional-tests.yml/badge.svg)](https://github.com/akaletekoffilevis/mondje/actions/workflows/functional-tests.yml)
+[![codeql](https://github.com/akaletekoffilevis/mondje/actions/workflows/codeql.yml/badge.svg)](https://github.com/akaletekoffilevis/mondje/actions/workflows/codeql.yml)
+
 Application de grand livre pour la coopérative **Mondje**, réalisée pour le hackathon
 **LesCracks 001**. Elle importe de gros volumes de transactions, les expose via une API
 REST et un tableau de bord web, et garantit qu'aucune ligne n'est perdue ni comptée deux
