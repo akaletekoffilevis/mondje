@@ -493,3 +493,7 @@ $RECYCLE.BIN/
 
 # Files uploaded for imports (kept on disk to allow resume after a restart)
 uploads/
+
+# Python cache (scripts de benchmark)
+__pycache__/
+*.pyc
