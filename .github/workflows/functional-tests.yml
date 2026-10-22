@@ -1,0 +1,70 @@
+name: functional-tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: functional-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  functional-tests:
+    name: Tests fonctionnels API sur SQL Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Mondje2026!Strong"
+          MSSQL_PID: "Developer"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Mondje2026!Strong' -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+      ConnectionStrings__MondjeDb: "Server=localhost,1433;Database=MondjeDb_Test;User Id=sa;Password=Mondje2026!Strong;TrustServerCertificate=True;Encrypt=False"
+      ASPNETCORE_ENVIRONMENT: "Development"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Installer le SDK .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+
+      - name: Restaurer les packages
+        run: dotnet restore Mondje.slnx
+
+      - name: Compiler
+        run: dotnet build Mondje.slnx --configuration Release --no-restore
+
+      - name: Tests fonctionnels
+        run: >
+          dotnet test tests/Application.FunctionalTests/Application.FunctionalTests.csproj
+          --configuration Release --no-build
+          --logger "trx;LogFileName=functional.trx"
+          --results-directory artifacts/test-results/functional
+
+      - name: Publier les resultats de tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-results
+          path: artifacts/test-results
+          retention-days: 14
