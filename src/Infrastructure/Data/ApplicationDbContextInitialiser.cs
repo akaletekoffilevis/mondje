@@ -29,12 +29,14 @@ public class ApplicationDbContextInitialiser(
     {
         try
         {
+            // Create the database and its schema first: ALTER DATABASE CURRENT fails when
+            // the database does not exist yet (first run, fresh test database in CI).
+            await context.Database.MigrateAsync();
+
             // Simple recovery model: a large import is a bulk operation, and minimal
             // logging (bulk insert under a table lock, data written in key order) is only
             // possible when the database is not in full recovery.
             await context.Database.ExecuteSqlRawAsync("ALTER DATABASE CURRENT SET RECOVERY SIMPLE");
-
-            await context.Database.MigrateAsync();
         }
         catch (Exception ex)
         {
