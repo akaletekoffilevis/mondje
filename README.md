@@ -14,6 +14,8 @@ Le projet couvre les quinze défis du brief : import TXT/NDJSON, export complet,
 par mot, pagination par curseur, solde historique, reprise après interruption, annulation
 chirurgicale, imports parallèles, traçabilité fichier/ligne et tableau de bord.
 
+**Hackathon :** [LesCracks 001](https://lescracks.com) — [formulaire de soumission](https://docs.google.com/forms/d/e/1FAIpQLSfXJgkY1f7ZdCrmr-wHUbs4Qfbmn1DB1d7q94wQ4LXTwV6vnw/viewform)
+
 ## Sommaire
 
 - [Démarrage rapide](#démarrage-rapide)
