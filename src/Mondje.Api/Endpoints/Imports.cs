@@ -5,6 +5,7 @@ using Mondje.Application.Imports.Common;
 using Mondje.Application.Imports.Queries.GetImport;
 using Mondje.Application.Imports.Queries.ListImportErrors;
 using Mondje.Application.Imports.Queries.ListImports;
+using Mondje.Domain.Constants;
 using Mondje.Domain.Entities;
 using Mondje.Infrastructure.Imports;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -39,6 +40,13 @@ public class Imports : IEndpointGroup
             // Nullable on purpose: a non-nullable IFormFile makes the framework throw
             // BadHttpRequestException before this code runs (a 500 with no explanation).
             return ApiErrors.Unprocessable("file", "Un fichier non vide est requis (champ 'file').");
+        }
+
+        var normalizedAgency = string.IsNullOrWhiteSpace(agency) ? null : agency.Trim();
+        if (normalizedAgency is not null && !Agencies.All.Contains(normalizedAgency))
+        {
+            return ApiErrors.Unprocessable("agency",
+                $"L'agence doit être l'une des suivantes : {string.Join(", ", Agencies.All)}.");
         }
 
         // Detect the format from the first non-empty line.
@@ -76,7 +84,7 @@ public class Imports : IEndpointGroup
             StoredFileName = storedFileName,
             FileSizeBytes = file.Length,
             Format = format,
-            Agency = agency,
+            Agency = normalizedAgency,
             RequestId = http.TraceIdentifier,
         }, cancellationToken);
 

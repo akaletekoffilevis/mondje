@@ -53,6 +53,13 @@ public class ImportEngine(IConfiguration configuration, IApplicationDbContext db
             .FirstOrDefaultAsync(b => b.Id == importId, cancellationToken)
             ?? throw new InvalidOperationException($"Import batch {importId} not found.");
 
+        // A batch cancelled before a worker picked it up must never start: the file was
+        // accepted, but the user changed their mind while it was still queued.
+        if (batch.Status == ImportBatch.Cancelled)
+        {
+            return;
+        }
+
         var fullPath = ImportStorage.GetPath(configuration, batch.StoredFileName);
 
         // Resume (challenge 12): a batch found RUNNING with a saved offset was interrupted;
