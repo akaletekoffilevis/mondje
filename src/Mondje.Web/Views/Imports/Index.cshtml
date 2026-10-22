@@ -7,7 +7,14 @@
 <form asp-action="Upload" method="post" enctype="multipart/form-data" class="row g-2 mb-3">
     @Html.AntiForgeryToken()
     <div class="col-md-5"><input type="file" name="file" class="form-control" accept=".txt,.ndjson,.json" /></div>
-    <div class="col-md-3"><input name="agency" class="form-control" placeholder="Agence (optionnel)" /></div>
+    <div class="col-md-3">
+        <select name="agency" class="form-select">
+            <option value="">Agence (optionnel)</option>
+            <option value="Douala">Douala</option>
+            <option value="Yaoundé">Yaoundé</option>
+            <option value="Bafoussam">Bafoussam</option>
+        </select>
+    </div>
     <div class="col-md-2"><button class="btn btn-success" type="submit">Importer</button></div>
 </form>
 

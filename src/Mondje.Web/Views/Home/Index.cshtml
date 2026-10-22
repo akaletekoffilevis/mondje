@@ -1,29 +1,117 @@
 @{
     ViewData["Title"] = "Tableau de bord";
     var status = ViewBag.Status as Mondje.Web.Models.ApiStatus;
+    var d = ViewBag.Dashboard as Mondje.Web.Models.DashboardDto;
 }
 <h1>Tableau de bord Mondje</h1>
-<p class="text-muted">Statut API : @(status?.status ?? "indisponible") — @(status?.utc.ToString("u") ?? "")</p>
+<p class="text-muted">
+    Statut API : <strong>@(status?.status ?? "indisponible")</strong>
+    @if (status is not null)
+    {
+        <span>— @status.utc.ToString("u")</span>
+    }
+    @if (d is not null)
+    {
+        <span>— chiffres calculés le @d.generatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</span>
+    }
+</p>
 
-<h2>Résultats des défis obligatoires</h2>
-<table class="table table-sm table-striped">
-    <thead><tr><th>#</th><th>Défi</th><th>Résultat mesuré</th><th>Statut</th></tr></thead>
+@if (d is null)
+{
+    <div class="alert alert-warning">
+        L'API est indisponible : démarrez <code>Mondje.Api</code> puis rechargez cette page.
+    </div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card h-100"><div class="card-body">
+                <div class="text-muted small">Solde (crédits − débits)</div>
+                <div class="fs-4 fw-bold @(d.ledger.balance < 0 ? "text-danger" : "text-success")">@d.ledger.balance.ToString("N0") FCFA</div>
+                <div class="small text-muted">@d.ledger.credits crédits · @d.ledger.debits débits</div>
+            </div></div>
+        </div>
+        <div class="col-md-3">
+            <div class="card h-100"><div class="card-body">
+                <div class="text-muted small">Transactions</div>
+                <div class="fs-4 fw-bold">@d.ledger.transactions.ToString("N0")</div>
+                <div class="small text-muted">@d.ledger.imported importées · @d.ledger.manual manuelles · @d.ledger.deleted supprimées</div>
+            </div></div>
+        </div>
+        <div class="col-md-3">
+            <div class="card h-100"><div class="card-body">
+                <div class="text-muted small">Imports</div>
+                <div class="fs-4 fw-bold">@d.imports.total</div>
+                <div class="small text-muted">@d.imports.completed terminés · @d.imports.running en cours · @d.imports.failed échecs</div>
+            </div></div>
+        </div>
+        <div class="col-md-3">
+            <div class="card h-100"><div class="card-body">
+                <div class="text-muted small">Lignes rejetées</div>
+                <div class="fs-4 fw-bold @(d.imports.errors > 0 ? "text-danger" : "")">@d.imports.errors.ToString("N0")</div>
+                <div class="small text-muted">sur @d.imports.processedLines.ToString("N0") lignes traitées</div>
+            </div></div>
+        </div>
+    </div>
+
+    <h2 class="h4">Défi ⑮ — temps, lignes et erreurs des imports</h2>
+    <table class="table table-sm table-striped align-middle">
+        <thead><tr><th>Cumul des imports</th><th>Dernière durée</th><th>Lignes lues</th><th>Insérées</th><th>Doublons</th><th>Erreurs</th></tr></thead>
+        <tbody>
+            <tr>
+                <td>@d.imports.total import(s)<br /><small class="text-muted">dernier : @(d.imports.lastFileName ?? "—") — @(d.imports.lastCompletedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "aucun import terminé")</small></td>
+                <td>@(d.imports.lastDurationMs is null ? "—" : (d.imports.lastDurationMs.Value / 1000.0).ToString("F1") + " s")</td>
+                <td>@d.imports.processedLines.ToString("N0")</td>
+                <td>@d.imports.inserted.ToString("N0")</td>
+                <td>@d.imports.duplicates.ToString("N0")</td>
+                <td class="text-danger">@d.imports.errors.ToString("N0")</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2 class="h4 mt-4">Trois agences, un seul carnet</h2>
+    <table class="table table-sm table-striped">
+        <thead><tr><th>Agence</th><th>Transactions</th><th>Crédits</th><th>Débits</th><th>Solde</th></tr></thead>
+        <tbody>
+        @foreach (var a in d.agencies)
+        {
+            <tr>
+                <td>@a.agency</td>
+                <td>@a.transactions.ToString("N0")</td>
+                <td>@a.creditAmount.ToString("N0")</td>
+                <td>@a.debitAmount.ToString("N0")</td>
+                <td class="fw-bold">@a.balance.ToString("N0")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+<h2 class="h4 mt-4">Les 15 défis</h2>
+<p class="text-muted small">
+    « Mesuré » = figure issue de la base courante ou d'un protocole reproductible décrit dans
+    <code>docs/PERFORMANCE.md</code>. Les colonnes de temps réellement mesurées sont indiquées ;
+    aucun chiffre n'est inventé.
+</p>
+<table class="table table-sm table-striped align-middle">
+    <thead><tr><th style="width:50px">#</th><th>Défi</th><th>Comment Mondje y répond</th><th style="width:130px">Statut</th></tr></thead>
     <tbody>
-        <tr><td>①</td><td>Export 100k lignes .json &lt; 30 s</td><td>voir /Transactions/export</td><td>✅</td></tr>
-        <tr><td>②</td><td>Import 100k &lt; 60 s + durée réelle affichée</td><td>~63 s (dev box chargé) — durée affichée</td><td>⚠️</td></tr>
-        <tr><td>③</td><td>Recherche p95 &lt; 200 ms sur 1M</td><td>index de mots (word-token)</td><td>✅</td></tr>
-        <tr><td>④</td><td>50k avec 2 % de lignes cassées → erreurs ligne+contenu+raison</td><td>erreurs listées</td><td>✅</td></tr>
-        <tr><td>⑤</td><td>Clic sur une erreur → ligne brute</td><td>voir /Imports/{id}/errors</td><td>✅</td></tr>
-        <tr><td>⑥</td><td>3 fichiers en parallèle, progression live, sans doublons</td><td>ImportWorker 3 canaux</td><td>✅</td></tr>
-        <tr><td>⑦</td><td>Traçabilité fichier + ligne &lt; 5 s</td><td>sourceFileName + sourceLine</td><td>✅</td></tr>
-        <tr><td>⑧</td><td>Même fichier 2× simultané → total identique</td><td>dédup par UUID</td><td>✅</td></tr>
-        <tr><td>⑨</td><td>Annulation chirurgicale (lignes non éditées disparaissent)</td><td>DELETE … EditedAtUtc IS NULL</td><td>✅</td></tr>
-        <tr><td>⑩</td><td>Curseur sans doublon/saut pendant import</td><td>keyset (CreatedAtUtc, Id)</td><td>✅</td></tr>
-        <tr><td>⑪</td><td>Solde à une date passée &lt; 100 ms sur 1M</td><td>index covering IX_Transactions_Balance</td><td>✅</td></tr>
-        <tr><td>⑫</td><td>Reprise après kill sans relire depuis le début</td><td>offset octet persisté</td><td>✅</td></tr>
-        <tr><td>⑬</td><td>1M lignes &lt; 256 Mo RAM</td><td>chunks 20k + flush</td><td>✅</td></tr>
-        <tr><td>⑭</td><td>Export complet &lt; 30 s, total == solde affiché</td><td>voir /Transactions/export</td><td>✅</td></tr>
-        <tr><td>⑮</td><td>Page tableau de bord par défi</td><td>cette page</td><td>✅</td></tr>
+        <tr><td>①</td><td>Export 100k .json &lt; 30 s</td><td>NDJSON streaming par lots keyset de 5 000 ; aucune matérialisation.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>②</td><td>Import 100k &lt; 60 s</td><td>Lecture 128 Ko, staging 20 000 lignes, SqlBulkCopy + INSERT ensembliste.</td><td><span class="badge bg-success">Implémenté</span>@(d is not null && d.imports.lastDurationMs is not null ? $" · dernier : {d.imports.lastDurationMs.Value / 1000.0:F1} s" : "")</td></tr>
+        <tr><td>③</td><td>Recherche p95 &lt; 200 ms sur 1M</td><td>Index de mots <code>TransactionTokens (Token, CreatedAtUtc, Id)</code>, sans scan du grand livre.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>④</td><td>2 % de lignes cassées, import complet + raisons</td><td>Chaque ligne est isolée : FORMAT ou VALIDATION, raison en français, ligne brute conservée.</td><td><span class="badge bg-success">Implémenté</span>@(d is not null ? $" · {d.imports.errors:N0} rejet(s)" : "")</td></tr>
+        <tr><td>⑤</td><td>Clic sur une erreur → ligne exacte</td><td>Page <code>/Imports/:id/errors</code> : numéro de ligne + contenu brut affiché.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑥</td><td>Trois fichiers en parallèle</td><td><code>ImportWorker</code> : 3 processeurs (configurable), un scope DI par lot.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑦</td><td>Qui a envoyé quoi ?</td><td><code>ImportId</code> + <code>SourceLine</code> sur chaque transaction, nom du fichier résolu en une requête.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑧</td><td>Même fichier 2× en parallèle = 1 fois</td><td>Déduplication SQL par UUID dans l'instruction d'insertion + reprise sur 2601/2627/1205.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑨</td><td>Annulation chirurgicale</td><td><code>DELETE … WHERE ImportId = @@id AND EditedAtUtc IS NULL</code> ; les corrections manuelles restent.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑩</td><td>Pagination sans saut ni doublon pendant un import</td><td>Curseur opaque <code>(CreatedAtUtc, Id)</code>, comparaison keyset.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑪</td><td>Solde à une date passée &lt; 100 ms</td><td>Index couvrant filtré <code>IX_Transactions_Balance</code>.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑫</td><td>Import coupé en plein milieu → reprise</td><td>Offset octet + compteurs persistés toutes les 5 s ; reprise par <code>Seek</code>.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑬</td><td>1M lignes &lt; 256 Mo de RAM</td><td>Flux + lots bornés ; mémoire indépendante de la taille du fichier.</td><td><span class="badge bg-warning text-dark">À mesurer</span></td></tr>
+        <tr><td>⑭</td><td>Export après correction &lt; 30 s, total = solde</td><td>Même filtre <code>DeletedAtUtc IS NULL</code> pour l'export et le solde ; streaming NDJSON/CSV.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
+        <tr><td>⑮</td><td>Tableau de bord : temps, lignes, erreurs</td><td>Cette page + <code>GET /api/Status/dashboard</code>.</td><td><span class="badge bg-success">Implémenté</span></td></tr>
     </tbody>
 </table>
 

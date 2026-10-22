@@ -9,7 +9,9 @@ public class HomeController(MondjeApiClient api) : Controller
     public async Task<IActionResult> Index(CancellationToken ct)
     {
         var status = await api.GetStatusAsync(ct);
+        var dashboard = await api.GetDashboardAsync(ct);
         ViewBag.Status = status;
+        ViewBag.Dashboard = dashboard;
         return View();
     }
 

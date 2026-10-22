@@ -11,6 +11,12 @@ public class MondjeApiClient(HttpClient httpClient)
         catch (HttpRequestException) { return null; }
     }
 
+    public async Task<DashboardDto?> GetDashboardAsync(CancellationToken ct = default)
+    {
+        try { return await httpClient.GetFromJsonAsync<DashboardDto>("/api/Status/dashboard", ct); }
+        catch (HttpRequestException) { return null; }
+    }
+
     public async Task<TransactionListResponse?> ListTransactionsAsync(
         string? type = null, long? minAmount = null, long? maxAmount = null,
         string? q = null, string? cursor = null, int? limit = null,

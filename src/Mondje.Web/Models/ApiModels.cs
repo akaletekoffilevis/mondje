@@ -4,6 +4,24 @@ namespace Mondje.Web.Models;
 
 public record ApiStatus(string status, DateTimeOffset utc, string? version);
 
+public record DashboardDto(
+    DateTime generatedAtUtc,
+    DashboardLedgerDto ledger,
+    DashboardImportsDto imports,
+    List<DashboardAgencyDto> agencies);
+
+public record DashboardLedgerDto(
+    long transactions, long credits, long debits, long creditAmount, long debitAmount,
+    long balance, long deleted, long imported, long manual);
+
+public record DashboardImportsDto(
+    int total, int pending, int running, int completed, int failed, int cancelled,
+    long totalLines, long processedLines, long inserted, long duplicates, long errors,
+    long? lastDurationMs, DateTime? lastCompletedAtUtc, string? lastFileName);
+
+public record DashboardAgencyDto(
+    string agency, long transactions, long creditAmount, long debitAmount, long balance);
+
 public record TransactionDto(
     string id, string type, long amount, string description,
     DateTime createdAtUtc, string? agency, Guid? importId, int? sourceLine,
