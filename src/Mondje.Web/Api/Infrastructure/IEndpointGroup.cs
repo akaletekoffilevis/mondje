@@ -1,4 +1,4 @@
-namespace Mondje.Api.Infrastructure;
+namespace Mondje.Web.Api.Infrastructure;
 
 /// <summary>
 /// Defines a group of related Minimal API endpoints.

@@ -1,3 +1,3 @@
 global using Ardalis.GuardClauses;
 global using MediatR;
-global using Mondje.Api.Infrastructure;
+global using Mondje.Web.Api.Infrastructure;

@@ -79,15 +79,15 @@ soumission.
 ```bash
 dotnet build Mondje.slnx --configuration Release
 
-# Lancer l'API compilée, pas le wrapper `dotnet run`, pour mesurer le bon processus
-dotnet artifacts/bin/Mondje.Api/release/Mondje.Api.dll --urls http://localhost:5002 &
+# Lancer l'application compilée, pas le wrapper `dotnet run`, pour mesurer le bon processus
+dotnet artifacts/bin/Mondje.Web/release/Mondje.Web.dll --urls http://localhost:5001 &
 echo $! > /tmp/mondje-api.pid
 ```
 
 Vérifier que l'API répond :
 
 ```bash
-curl -s http://localhost:5002/api/Status
+curl -s http://localhost:5001/api/Status
 ```
 
 ### 2. Générer un jeu de données
@@ -151,7 +151,7 @@ applicatif, mais SQL Server doit disposer d'assez de mémoire pour le buffer poo
 Sous Windows, utiliser Task Manager ou :
 
 ```powershell
-(Get-Process Mondje.Api).PeakWorkingSet64 / 1MB
+(Get-Process Mondje.Web).PeakWorkingSet64 / 1MB
 ```
 
 ### 5. Mesurer la recherche
@@ -174,7 +174,7 @@ uniquement. Ne jamais modifier la base de démonstration pendant une évaluation
 ```bash
 # Temps de téléchargement complet
 time curl -s -o /tmp/export.ndjson \
-  "http://localhost:5002/api/Transactions/export?format=json"
+  "http://localhost:5001/api/Transactions/export?format=json"
 
 # Vérifier que le total exporté égale le solde
 python3 scripts/check_export_balance.py

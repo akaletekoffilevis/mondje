@@ -497,3 +497,9 @@ uploads/
 # Python cache (scripts de benchmark)
 __pycache__/
 *.pyc
+
+# Production secrets and deployment artifacts
+appsettings.Production.json
+publish-*/
+deploy/
+*.zip

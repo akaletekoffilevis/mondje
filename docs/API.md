@@ -1,6 +1,6 @@
 # Référence API
 
-Base locale : `http://localhost:5002`. Toutes les dates sont en UTC et sérialisées en
+Base locale : `http://localhost:5001`. Toutes les dates sont en UTC et sérialisées en
 ISO 8601. Les montants sont des entiers en **FCFA**.
 
 Chaque réponse porte un en-tête `X-Request-Id`. Un identifiant fourni par le client
@@ -50,7 +50,7 @@ Liste paginée par curseur, triée par date décroissante.
 | `includeDeleted` | booléen | `false` | inclure les lignes supprimées |
 
 ```bash
-curl "http://localhost:5002/api/Transactions?q=electricite&type=DEBIT&limit=20"
+curl "http://localhost:5001/api/Transactions?q=electricite&type=DEBIT&limit=20"
 ```
 
 ```json
@@ -175,7 +175,7 @@ Le format est détecté sur la première ligne non vide :
 
 ```bash
 curl -F "file=@/tmp/transactions.txt" -F "agency=Douala" \
-  http://localhost:5002/api/Imports
+  http://localhost:5001/api/Imports
 ```
 
 Réponse `202 Accepted` avec le lot créé :

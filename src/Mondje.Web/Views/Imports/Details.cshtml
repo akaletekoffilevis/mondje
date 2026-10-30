@@ -48,7 +48,7 @@
 (function(){
     var id = "@Model.id";
     var terminal = ["COMPLETED","FAILED","CANCELLED"];
-    var apiUrl = "http://localhost:5002/api/Imports/" + id;
+    var apiUrl = "/api/Imports/" + id;
     function fmt(n){ return n.toLocaleString("fr-FR"); }
     function poll(){
         fetch(apiUrl).then(function(r){ return r.json(); }).then(function(d){

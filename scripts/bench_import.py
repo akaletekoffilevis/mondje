@@ -63,7 +63,7 @@ def upload(url: str, path: Path, agency: str | None) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure a Mondje import end to end.")
     parser.add_argument("--file", type=Path, required=True)
-    parser.add_argument("--api", default="http://localhost:5002")
+    parser.add_argument("--api", default="http://localhost:5001")
     parser.add_argument("--agency", choices=["Douala", "Yaoundé", "Bafoussam"])
     parser.add_argument("--timeout", type=int, default=900, help="maximum wait in seconds")
     parser.add_argument("--interval", type=float, default=0.5, help="polling interval")

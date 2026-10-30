@@ -12,7 +12,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 
-namespace Mondje.Api.Endpoints;
+namespace Mondje.Web.Api.Endpoints;
 
 public class Imports : IEndpointGroup
 {

@@ -1,7 +1,7 @@
 using Mondje.Application.Dashboard.GetDashboard;
 using Microsoft.AspNetCore.Http.HttpResults;
 
-namespace Mondje.Api.Endpoints;
+namespace Mondje.Web.Api.Endpoints;
 
 /// <summary>
 /// Minimal health/status endpoint (used by Mondje.Web to display API availability) and

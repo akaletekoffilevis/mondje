@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 
-namespace Mondje.Api.Infrastructure;
+namespace Mondje.Web.Api.Infrastructure;
 
 /// <summary>
 /// Adds standard error responses to every OpenAPI operation. A 422 Unprocessable Content is added

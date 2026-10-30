@@ -12,7 +12,7 @@ using Mondje.Application.Transactions.Queries.GetTransaction;
 using Mondje.Application.Transactions.Queries.ListTransactions;
 using Microsoft.AspNetCore.Http.HttpResults;
 
-namespace Mondje.Api.Endpoints;
+namespace Mondje.Web.Api.Endpoints;
 
 /// <summary>
 /// CRUD endpoints for transactions. Validation failures surface as 422 and missing or

@@ -18,7 +18,7 @@ dans le flux HTTP, sans construction d'une liste en mémoire.
 
 ```bash
 time curl -s -o /tmp/export.ndjson \
-  "http://localhost:5002/api/Transactions/export?format=json"
+  "http://localhost:5001/api/Transactions/export?format=json"
 ```
 
 ## ② Import de 100 000 transactions en moins de 60 secondes, avec durée réelle
@@ -61,7 +61,7 @@ importées.
 ```bash
 python3 scripts/generate_data.py --lines 50000 --broken 0.02 --output /tmp/casse.txt
 python3 scripts/bench_import.py --file /tmp/casse.txt --agency Douala
-curl "http://localhost:5002/api/Imports/{id}/errors?limit=10"
+curl "http://localhost:5001/api/Imports/{id}/errors?limit=10"
 ```
 
 ## ⑤ Clic sur une erreur : affichage de la ligne brute
@@ -96,7 +96,7 @@ groupée, sans jointure par ligne.
 **Vérification.**
 
 ```bash
-curl "http://localhost:5002/api/Transactions?limit=5" | jq '.items[] | {id, sourceFileName, sourceLine}'
+curl "http://localhost:5001/api/Transactions?limit=5" | jq '.items[] | {id, sourceFileName, sourceLine}'
 ```
 
 ## ⑧ Même fichier importé deux fois : total identique
@@ -155,7 +155,7 @@ vivantes. Aucun recalcul de toute la table.
 ```bash
 for i in $(seq 1 100); do
   curl -s -o /dev/null -w "%{time_total}\n" \
-    "http://localhost:5002/api/Transactions/balance?at=2026-10-19T12:00:00Z"
+    "http://localhost:5001/api/Transactions/balance?at=2026-10-19T12:00:00Z"
 done | sort -n | tail -5
 ```
 

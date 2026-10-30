@@ -34,7 +34,16 @@ public class MondjeApiClient(HttpClient httpClient)
     }
 
     public async Task<TransactionDto?> GetTransactionAsync(string id, CancellationToken ct = default)
-        => await httpClient.GetFromJsonAsync<TransactionDto>($"/api/Transactions/{Uri.EscapeDataString(id)}", ct);
+    {
+        try
+        {
+            return await httpClient.GetFromJsonAsync<TransactionDto>($"/api/Transactions/{Uri.EscapeDataString(id)}", ct);
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+    }
 
     public async Task<(bool ok, string? error)> CreateTransactionAsync(CreateTransactionRequest req, CancellationToken ct = default)
     {
@@ -79,7 +88,16 @@ public class MondjeApiClient(HttpClient httpClient)
     }
 
     public async Task<ImportDto?> GetImportAsync(Guid id, CancellationToken ct = default)
-        => await httpClient.GetFromJsonAsync<ImportDto>($"/api/Imports/{id}", ct);
+    {
+        try
+        {
+            return await httpClient.GetFromJsonAsync<ImportDto>($"/api/Imports/{id}", ct);
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+    }
 
     public async Task<ImportErrorListResponse?> GetImportErrorsAsync(Guid id, string? cursor = null, int? limit = null, CancellationToken ct = default)
     {

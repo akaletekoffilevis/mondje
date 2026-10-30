@@ -32,16 +32,25 @@ public class ApplicationDbContextInitialiser(
             // Create the database and its schema first: ALTER DATABASE CURRENT fails when
             // the database does not exist yet (first run, fresh test database in CI).
             await context.Database.MigrateAsync();
-
-            // Simple recovery model: a large import is a bulk operation, and minimal
-            // logging (bulk insert under a table lock, data written in key order) is only
-            // possible when the database is not in full recovery.
-            await context.Database.ExecuteSqlRawAsync("ALTER DATABASE CURRENT SET RECOVERY SIMPLE");
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "An error occurred while initialising the database.");
             throw;
+        }
+
+        try
+        {
+            // Simple recovery model: a large import is a bulk operation, and minimal
+            // logging (bulk insert under a table lock, data written in key order) is only
+            // possible when the database is not in full recovery.
+            // Shared hosting accounts sometimes cannot ALTER DATABASE; that must not
+            // prevent the application from starting with a migrated schema.
+            await context.Database.ExecuteSqlRawAsync("ALTER DATABASE CURRENT SET RECOVERY SIMPLE");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not switch the database to the SIMPLE recovery model.");
         }
     }
 }

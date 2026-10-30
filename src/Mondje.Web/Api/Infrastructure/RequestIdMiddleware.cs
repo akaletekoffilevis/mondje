@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace Mondje.Api.Infrastructure;
+namespace Mondje.Web.Api.Infrastructure;
 
 /// <summary>
 /// Rule: "chaque requête porte un identifiant dans les logs". Every request gets an id:

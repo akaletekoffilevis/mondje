@@ -4,31 +4,32 @@
 
 Mondje est une solution .NET 10 organisée en couches. Les dépendances pointent vers
 l'intérieur : `Domain` ne dépend de rien, `Application` dépend de `Domain`, `Infrastructure`
-implémente les interfaces de `Application`, et les deux projets exécutables (`Mondje.Api`,
-`Mondje.Web`) composent le tout.
+implémente les interfaces de `Application`, et `Mondje.Web` compose le tout dans un seul
+site exécutable (interface MVC + API Minimal).
 
 ```text
-┌────────────────────┐        HTTP         ┌────────────────────┐
-│    Mondje.Web      │ ──────────────────▶ │    Mondje.Api      │
-│  MVC / Razor       │                     │  Minimal API       │
-└────────────────────┘                     └─────────┬──────────┘
-                                                     │ MediatR
-                                           ┌─────────▼──────────┐
-                                           │    Application     │
-                                           │ commandes/queries  │
-                                           │ validation         │
-                                           └─────────┬──────────┘
-                                                     │ interfaces
-                                           ┌─────────▼──────────┐
-                                           │   Infrastructure   │
-                                           │ EF Core, SQL Server│
-                                           │ moteur d'import    │
-                                           └─────────┬──────────┘
-                                                     │
-                                           ┌─────────▼──────────┐
-                                           │       Domain       │
-                                           │ entités, règles    │
-                                           └────────────────────┘
+┌────────────────────────────────────────────────────┐
+│                    Mondje.Web                      │
+│  MVC / Razor  ──▶  MondjeApiClient  ──▶  /api/...  │
+│  Minimal API, worker d'import, middlewares         │
+└─────────────────────────┬──────────────────────────┘
+                          │ MediatR
+                ┌─────────▼──────────┐
+                │    Application     │
+                │ commandes/queries  │
+                │ validation         │
+                └─────────┬──────────┘
+                          │ interfaces
+                ┌─────────▼──────────┐
+                │   Infrastructure   │
+                │ EF Core, SQL Server│
+                │ moteur d'import    │
+                └─────────┬──────────┘
+                          │
+                ┌─────────▼──────────┐
+                │       Domain       │
+                │ entités, règles    │
+                └────────────────────┘
 ```
 
 ## Projets
@@ -38,8 +39,7 @@ implémente les interfaces de `Application`, et les deux projets exécutables (`
 | `src/Domain` | entités `Transaction`, `ImportBatch`, `ImportErrorLine`, `TransactionToken`, constantes d'agence, normalisation `SearchTokens` |
 | `src/Application` | requêtes et commandes MediatR, DTO, validateurs FluentValidation, interfaces de persistance |
 | `src/Infrastructure` | `ApplicationDbContext`, configurations EF Core, migrations, `ImportEngine`, `ImportStorage` |
-| `src/Mondje.Api` | endpoints REST, middleware d'identifiant de requête, gestion globale des erreurs, file et worker d'import |
-| `src/Mondje.Web` | contrôleurs MVC et vues Razor qui consomment l'API via `MondjeApiClient` |
+| `src/Mondje.Web` | site unique : endpoints REST (`Api/`), middleware d'identifiant de requête, gestion globale des erreurs, file et worker d'import, contrôleurs MVC et vues Razor qui consomment l'API via `MondjeApiClient` |
 | `src/Shared` | types partagés entre l'API et le frontend |
 
 ## Modèle de données

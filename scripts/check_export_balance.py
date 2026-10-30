@@ -20,7 +20,7 @@ import urllib.request
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify export total == balance.")
-    parser.add_argument("--api", default="http://localhost:5002")
+    parser.add_argument("--api", default="http://localhost:5001")
     parser.add_argument("--at", help="ISO 8601 balance cutoff")
     parser.add_argument("--query", default="", help="optional search word filter")
     parser.add_argument("--include-deleted", action="store_true")

@@ -23,7 +23,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\src\Mondje.Api\Mondje.Api.csproj" />
+        <ProjectReference Include="..\..\src\Mondje.Web\Mondje.Web.csproj" />
     </ItemGroup>
 
 </Project>

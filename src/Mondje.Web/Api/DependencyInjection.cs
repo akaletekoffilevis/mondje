@@ -1,4 +1,4 @@
-using Mondje.Api.Infrastructure;
+using Mondje.Web.Api.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Microsoft.Extensions.DependencyInjection;

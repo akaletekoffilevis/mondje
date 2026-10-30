@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 
-namespace Mondje.Api.Infrastructure;
+namespace Mondje.Web.Api.Infrastructure;
 
 /// <summary>422 responses with a French reason and no technical trace (Mondje rules).</summary>
 public static class ApiErrors

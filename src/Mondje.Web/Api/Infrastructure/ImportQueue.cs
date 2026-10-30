@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 
-namespace Mondje.Api.Infrastructure;
+namespace Mondje.Web.Api.Infrastructure;
 
 /// <summary>In-memory queue of import batch ids to process. Unbounded so uploads never block.</summary>
 public class ImportQueue

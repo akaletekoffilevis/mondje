@@ -2,8 +2,9 @@
 
 ## Configuration
 
-L'API lit sa configuration dans `appsettings.json`, `appsettings.Development.json` et les
-variables d'environnement (préfixe `ConnectionStrings__` et `Storage__`, `Import__`).
+L'application lit sa configuration dans `appsettings.json`, `appsettings.Development.json`,
+`appsettings.Production.json` (non versionné) et les variables d'environnement (préfixe
+`ConnectionStrings__`, `Storage__`, `Import__`).
 
 | Clé | Défaut | Description |
 |---|---|---|
@@ -12,7 +13,7 @@ variables d'environnement (préfixe `ConnectionStrings__` et `Storage__`, `Impor
 | `IMPORT_FOLDER` | — | variable d'environnement utilisée si `Storage:ImportFolder` est absente |
 | `Import:MaxParallel` | `3` | nombre d'imports traités simultanément |
 | `ASPNETCORE_URLS` | profil de lancement | adresses d'écoute |
-| `ASPNETCORE_ENVIRONMENT` | `Production` par défaut | `Development` active OpenAPI, Scalar et les migrations automatiques |
+| `ASPNETCORE_ENVIRONMENT` | `Production` par défaut | `Development` active OpenAPI et Scalar |
 
 Exemple :
 
@@ -22,7 +23,7 @@ export ConnectionStrings__MondjeDb="Server=localhost,1433;Database=MondjeDb;User
 export Storage__ImportFolder=/var/lib/mondje/uploads
 export Import__MaxParallel=3
 
-dotnet run --project src/Mondje.Api --launch-profile http
+dotnet run --project src/Mondje.Web --launch-profile http
 ```
 
 ## Base de données
@@ -41,13 +42,15 @@ connexion avant tout usage partagé.
 
 ### Migrations
 
-En développement, l'API applique les migrations au démarrage. En production, préférer une
-étape explicite :
+L'application applique les migrations au démarrage, en développement comme en production.
+Si la base est indisponible, l'erreur est journalisée et le site démarre quand même (les
+pages dépendant de la base restent indisponibles). Pour appliquer les migrations
+explicitement :
 
 ```bash
 dotnet ef database update \
   --project src/Infrastructure \
-  --startup-project src/Mondje.Api
+  --startup-project src/Mondje.Web
 ```
 
 L'initialisation passe la base en mode de récupération `SIMPLE` pour permettre le
@@ -98,7 +101,7 @@ WHERE DeletedAtUtc IS NULL;
 Niveau de log par défaut : `Information`. Pour diagnostiquer un import :
 
 ```bash
-Logging__LogLevel__Mondje=Debug dotnet run --project src/Mondje.Api
+Logging__LogLevel__Mondje=Debug dotnet run --project src/Mondje.Web
 ```
 
 ## Limites opérationnelles

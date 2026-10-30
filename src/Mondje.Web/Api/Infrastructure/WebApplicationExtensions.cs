@@ -1,6 +1,6 @@
 using System.Reflection;
 
-namespace Mondje.Api.Infrastructure;
+namespace Mondje.Web.Api.Infrastructure;
 
 public static class WebApplicationExtensions
 {

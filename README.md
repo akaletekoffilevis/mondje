@@ -41,19 +41,20 @@ Prérequis :
 # 1. Base de données locale (Docker)
 docker compose up -d sqlserver
 
-# 2. API — http://localhost:5002
-dotnet run --project src/Mondje.Api --launch-profile http
-
-# 3. Interface web — http://localhost:5001
+# 2. Application complète (interface + API) — http://localhost:5001
 dotnet run --project src/Mondje.Web --launch-profile http
 ```
 
-L'API applique automatiquement les migrations EF Core au démarrage en développement.
-La référence OpenAPI est disponible sur `http://localhost:5002/openapi/v1.json` et
-l'interface Scalar sur `http://localhost:5002/scalar`.
+L'application applique automatiquement les migrations EF Core au démarrage, en
+développement comme en production. L'interface et l'API partagent le même site :
+
+- interface : `http://localhost:5001/`
+- référence OpenAPI : `http://localhost:5001/openapi/v1.json`
+- interface Scalar : `http://localhost:5001/scalar`
+- API : `http://localhost:5001/api/...`
 
 La chaîne de connexion par défaut se trouve dans
-`src/Mondje.Api/appsettings.Development.json`. Pour utiliser une autre instance :
+`src/Mondje.Web/appsettings.Development.json`. Pour utiliser une autre instance :
 
 ```bash
 export ConnectionStrings__MondjeDb="Server=localhost,1433;Database=MondjeDb;User Id=sa;Password=MonMotDePasse;TrustServerCertificate=True"
@@ -96,8 +97,8 @@ src/
   Domain/          entités, constantes, normalisation de recherche
   Application/     MediatR, validation FluentValidation, requêtes et commandes
   Infrastructure/  EF Core 10, SQL Server, moteur d'import, stockage des fichiers
-  Mondje.Api/      API REST minimale, worker d'import, gestion des erreurs
-  Mondje.Web/      interface MVC (Razor + Bootstrap) consommant l'API
+  Mondje.Web/      site unique : interface MVC (Razor + Bootstrap) et API REST,
+                   worker d'import, gestion des erreurs
 tests/
   Domain.UnitTests/
   Application.UnitTests/
@@ -252,6 +253,7 @@ Détail par défi : [docs/CHALLENGES.md](docs/CHALLENGES.md).
 - [Performance et mesures](docs/PERFORMANCE.md)
 - [Défis du brief](docs/CHALLENGES.md)
 - [Exploitation](docs/OPERATIONS.md)
+- [Déploiement sur MonsterASP.NET](docs/DEPLOYMENT.md)
 
 ## Licence
 

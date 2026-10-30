@@ -41,7 +41,7 @@ def percentile(values: list[float], fraction: float) -> float:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure Mondje search latency.")
-    parser.add_argument("--api", default="http://localhost:5002")
+    parser.add_argument("--api", default="http://localhost:5001")
     parser.add_argument("--queries", nargs="+", default=DEFAULT_QUERIES)
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--runs", type=int, default=200, help="total measured requests")
